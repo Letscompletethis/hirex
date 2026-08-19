@@ -1,16 +1,24 @@
 "use client";
 
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   BriefcaseBusiness,
   Users,
+  FileText,
+  CalendarDays,
+  CheckCircle2,
+  XCircle,
   UserRound,
+  UserCircle,
   LogOut,
   Menu,
   X,
   ChevronRight,
+  Building2,
+  BarChart3,
+  ShieldCheck,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 
@@ -20,7 +28,7 @@ type NavItem = {
   icon: ReactNode;
 };
 
-const navigation: NavItem[] = [
+const mainNavigation: NavItem[] = [
   {
     label: "Dashboard",
     href: "/recruiter",
@@ -32,14 +40,57 @@ const navigation: NavItem[] = [
     icon: <BriefcaseBusiness size={18} />,
   },
   {
-    label: "Applications",
-    href: "/recruiter/applications",
+    label: "Candidates Pool",
+    href: "/recruiter/candidates",
     icon: <Users size={18} />,
   },
   {
-    label: "Candidates",
-    href: "/recruiter/candidates",
+    label: "Submissions",
+    href: "/recruiter/submissions",
+    icon: <FileText size={18} />,
+  },
+  {
+    label: "Interviews",
+    href: "/recruiter/interviews",
+    icon: <CalendarDays size={18} />,
+  },
+  {
+    label: "Offers",
+    href: "/recruiter/offers",
+    icon: <FileText size={18} />,
+  },
+  {
+    label: "Starts",
+    href: "/recruiter/starts",
+    icon: <CheckCircle2 size={18} />,
+  },
+  {
+    label: "Rejected",
+    href: "/recruiter/rejected",
+    icon: <XCircle size={18} />,
+  },
+];
+
+const ownerNavigation: NavItem[] = [
+  {
+    label: "Recruiters",
+    href: "/recruiter/recruiters",
     icon: <UserRound size={18} />,
+  },
+  {
+    label: "Clients",
+    href: "/recruiter/clients",
+    icon: <Building2 size={18} />,
+  },
+  {
+    label: "Reports",
+    href: "/recruiter/reports",
+    icon: <BarChart3 size={18} />,
+  },
+  {
+    label: "User Management",
+    href: "/recruiter/users",
+    icon: <ShieldCheck size={18} />,
   },
 ];
 
@@ -51,18 +102,83 @@ export default function RecruiterLayout({
   const pathname = usePathname();
   const router = useRouter();
 
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+
+  const [isOwner, setIsOwner] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
+  const [userName, setUserName] = useState("Recruiter");
+  const [userRole, setUserRole] = useState("Recruiter");
 
   const isLoginPage = pathname === "/recruiter/login";
 
+  useEffect(() => {
+    async function loadUser() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        return;
+      }
+
+      const email = user.email || "";
+
+      const fullName =
+        user.user_metadata?.full_name ||
+        user.user_metadata?.name ||
+        "";
+
+      const role = String(
+        user.user_metadata?.role ||
+          user.user_metadata?.user_role ||
+          ""
+      ).toLowerCase();
+
+      const owner =
+        role === "owner" ||
+        role === "admin" ||
+        role === "super_admin";
+
+      setUserEmail(email);
+
+      if (fullName) {
+        setUserName(fullName);
+      } else if (email) {
+        setUserName(email.split("@")[0]);
+      }
+
+      setIsOwner(owner);
+
+      if (owner) {
+        setUserRole("Owner");
+      } else {
+        setUserRole("Recruiter");
+      }
+    }
+
+    loadUser();
+  }, []);
+
+  useEffect(() => {
+    setMenuOpen(false);
+    setAccountOpen(false);
+  }, [pathname]);
+
   async function handleLogout() {
-    if (loggingOut) return;
+    if (loggingOut) {
+      return;
+    }
 
     setLoggingOut(true);
 
     try {
       await supabase.auth.signOut();
+
+      setMenuOpen(false);
+      setAccountOpen(false);
+
       router.push("/recruiter/login");
       router.refresh();
     } catch (error) {
@@ -76,11 +192,14 @@ export default function RecruiterLayout({
       return pathname === "/recruiter";
     }
 
-    return pathname === href || pathname.startsWith(`${href}/`);
+    return (
+      pathname === href ||
+      pathname.startsWith(`${href}/`)
+    );
   }
 
-  function closeMobileMenu() {
-    setMobileOpen(false);
+  function closeMenu() {
+    setMenuOpen(false);
   }
 
   if (isLoginPage) {
@@ -89,233 +208,416 @@ export default function RecruiterLayout({
 
   return (
     <div className="min-h-screen bg-[#03040a] text-white">
-      <div className="flex min-h-screen">
-        <aside className="hidden w-64 shrink-0 border-r border-white/10 bg-[#05060d] lg:flex lg:flex-col">
-          <SidebarContent
-            pathname={pathname}
-            isActive={isActive}
-            onLogout={handleLogout}
-            loggingOut={loggingOut}
-          />
-        </aside>
 
-        {mobileOpen && (
-          <div className="fixed inset-0 z-50 lg:hidden">
+      {/* TOP HEADER */}
+
+      <header className="fixed left-0 right-0 top-0 z-40 h-16 border-b border-white/10 bg-[#03040a]">
+
+        <div className="flex h-full items-center justify-between px-4 sm:px-6">
+
+          {/* LEFT SIDE */}
+
+          <div className="flex items-center gap-3">
+
             <button
               type="button"
-              aria-label="Close navigation"
-              onClick={closeMobileMenu}
-              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-            />
+              onClick={() => setMenuOpen(true)}
+              aria-label="Open navigation"
+              className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-white/60 transition hover:bg-white/[0.08] hover:text-white"
+            >
+              <Menu size={21} />
+            </button>
 
-            <aside className="relative flex h-full w-[280px] flex-col border-r border-white/10 bg-[#05060d] shadow-2xl">
-              <div className="flex items-center justify-between border-b border-white/10 px-5 py-5">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-purple-400/20 bg-purple-400/10">
-                    <span className="text-sm font-bold text-purple-200">
-                      HX
-                    </span>
-                  </div>
+            <div className="flex items-center gap-3">
 
-                  <div>
-                    <p className="text-sm font-semibold">HireX</p>
-                    <p className="text-[10px] uppercase tracking-[0.2em] text-white/30">
-                      ATS
-                    </p>
-                  </div>
-                </div>
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-purple-400/20 bg-purple-400/10">
+                <span className="text-xs font-bold text-purple-200">
+                  HX
+                </span>
+              </div>
+
+              <div className="hidden sm:block">
+
+                <p className="text-sm font-semibold tracking-tight">
+                  HireX
+                </p>
+
+                <p className="text-[9px] font-medium uppercase tracking-[0.22em] text-white/30">
+                  Recruiter ATS
+                </p>
+
+              </div>
+
+            </div>
+
+          </div>
+
+          {/* ACCOUNT */}
+
+          <div className="relative">
+
+            <button
+              type="button"
+              onClick={() =>
+                setAccountOpen(!accountOpen)
+              }
+              className="flex items-center gap-3 rounded-xl px-2 py-1.5 transition hover:bg-white/[0.05]"
+            >
+
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-purple-400/10 text-sm font-semibold text-purple-200">
+                {userName.charAt(0).toUpperCase()}
+              </div>
+
+              <div className="hidden text-left sm:block">
+
+                <p className="max-w-[180px] truncate text-xs font-semibold text-white/85">
+                  {userName}
+                </p>
+
+                <p className="max-w-[180px] truncate text-[10px] text-white/30">
+                  {userRole}
+                </p>
+
+              </div>
+
+              <UserCircle
+                size={17}
+                className="hidden text-white/30 sm:block"
+              />
+
+            </button>
+
+            {accountOpen && (
+              <>
 
                 <button
                   type="button"
-                  onClick={closeMobileMenu}
-                  className="rounded-lg p-2 text-white/40 hover:bg-white/[0.06] hover:text-white"
-                >
-                  <X size={19} />
-                </button>
-              </div>
+                  aria-label="Close account menu"
+                  onClick={() =>
+                    setAccountOpen(false)
+                  }
+                  className="fixed inset-0 z-40 cursor-default"
+                />
 
-              <SidebarNavigation
-                pathname={pathname}
-                isActive={isActive}
-                onNavigate={closeMobileMenu}
-              />
+                <div className="absolute right-0 top-12 z-50 w-64 rounded-2xl border border-white/10 bg-[#080910] p-3 shadow-2xl">
 
-              <SidebarFooter
-                onLogout={handleLogout}
-                loggingOut={loggingOut}
-              />
-            </aside>
+                  <div className="mb-2 border-b border-white/10 px-3 pb-3">
+
+                    <p className="truncate text-sm font-semibold text-white/90">
+                      {userName}
+                    </p>
+
+                    <p className="mt-1 truncate text-xs text-white/35">
+                      {userEmail || "Recruiter account"}
+                    </p>
+
+                    <p className="mt-2 text-[10px] uppercase tracking-wider text-purple-300/60">
+                      {userRole}
+                    </p>
+
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    disabled={loggingOut}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-white/55 transition hover:bg-red-400/[0.07] hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+
+                    <LogOut size={17} />
+
+                    <span>
+                      {loggingOut
+                        ? "Signing out..."
+                        : "Log out"}
+                    </span>
+
+                  </button>
+
+                </div>
+
+              </>
+            )}
+
           </div>
-        )}
 
-        <div className="min-w-0 flex-1">
-          <header className="sticky top-0 z-30 border-b border-white/10 bg-[#03040a]/90 backdrop-blur-xl lg:hidden">
-            <div className="flex h-16 items-center justify-between px-4">
-              <button
-                type="button"
-                onClick={() => setMobileOpen(true)}
-                className="rounded-xl border border-white/10 bg-white/[0.04] p-2.5 text-white/60 hover:bg-white/[0.08] hover:text-white"
-                aria-label="Open navigation"
-              >
-                <Menu size={20} />
-              </button>
+        </div>
 
-              <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-purple-400/20 bg-purple-400/10">
+      </header>
+
+      {/* SIDEBAR */}
+
+      {menuOpen && (
+        <div className="fixed inset-0 z-50">
+
+          {/* BACKDROP */}
+
+          <button
+            type="button"
+            aria-label="Close navigation"
+            onClick={closeMenu}
+            className="absolute inset-0 bg-black/55"
+          />
+
+          {/* SIDEBAR */}
+
+          <aside className="relative flex h-full w-[300px] max-w-[88vw] flex-col border-r border-white/10 bg-[#05060d] shadow-2xl">
+
+            {/* SIDEBAR HEADER */}
+
+            <div className="flex h-16 shrink-0 items-center justify-between border-b border-white/10 px-5">
+
+              <div className="flex items-center gap-3">
+
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-purple-400/20 bg-purple-400/10">
                   <span className="text-xs font-bold text-purple-200">
                     HX
                   </span>
                 </div>
 
-                <span className="text-sm font-semibold">
-                  HireX ATS
-                </span>
+                <div>
+
+                  <p className="text-sm font-semibold">
+                    HireX
+                  </p>
+
+                  <p className="text-[9px] uppercase tracking-[0.22em] text-white/30">
+                    Recruiter ATS
+                  </p>
+
+                </div>
+
               </div>
 
-              <div className="w-10" />
-            </div>
-          </header>
-
-          <main className="min-w-0">
-            {children}
-          </main>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SidebarContent({
-  pathname,
-  isActive,
-  onLogout,
-  loggingOut,
-}: {
-  pathname: string;
-  isActive: (href: string) => boolean;
-  onLogout: () => void;
-  loggingOut: boolean;
-}) {
-  return (
-    <>
-      <div className="flex items-center gap-3 border-b border-white/10 px-5 py-6">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-purple-400/20 bg-purple-400/10">
-          <span className="text-sm font-bold text-purple-200">
-            HX
-          </span>
-        </div>
-
-        <div>
-          <p className="text-sm font-semibold tracking-tight">
-            HireX
-          </p>
-
-          <p className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.22em] text-white/30">
-            Recruiter ATS
-          </p>
-        </div>
-      </div>
-
-      <SidebarNavigation
-        pathname={pathname}
-        isActive={isActive}
-      />
-
-      <SidebarFooter
-        onLogout={onLogout}
-        loggingOut={loggingOut}
-      />
-    </>
-  );
-}
-
-function SidebarNavigation({
-  isActive,
-  onNavigate,
-}: {
-  pathname: string;
-  isActive: (href: string) => boolean;
-  onNavigate?: () => void;
-}) {
-  return (
-    <nav className="flex-1 px-3 py-5">
-      <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/25">
-        Workspace
-      </p>
-
-      <div className="space-y-1">
-        {navigation.map((item) => {
-          const active = isActive(item.href);
-
-          return (
-            <a
-              key={item.href}
-              href={item.href}
-              onClick={onNavigate}
-              className={
-                "group flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition " +
-                (active
-                  ? "border border-purple-400/15 bg-purple-400/10 text-purple-100"
-                  : "border border-transparent text-white/45 hover:bg-white/[0.05] hover:text-white")
-              }
-            >
-              <span
-                className={
-                  active
-                    ? "text-purple-200"
-                    : "text-white/35 group-hover:text-white/70"
-                }
+              <button
+                type="button"
+                onClick={closeMenu}
+                aria-label="Close navigation"
+                className="flex h-9 w-9 items-center justify-center rounded-xl text-white/40 transition hover:bg-white/[0.06] hover:text-white"
               >
-                {item.icon}
-              </span>
+                <X size={19} />
+              </button>
 
-              <span className="flex-1">{item.label}</span>
+            </div>
 
-              {active && (
-                <ChevronRight
-                  size={15}
-                  className="text-purple-200/50"
-                />
+            {/* NAVIGATION */}
+
+            <nav className="flex-1 overflow-y-auto px-3 py-5">
+
+              {/* WORKSPACE */}
+
+              <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/25">
+                Workspace
+              </p>
+
+              <div className="space-y-1">
+
+                {mainNavigation.map((item) => {
+
+                  const active = isActive(item.href);
+
+                  return (
+                    <a
+                      key={item.label}
+                      href={item.href}
+                      onClick={closeMenu}
+                      className={
+                        "group flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition " +
+                        (
+                          active
+                            ? "border border-purple-400/15 bg-purple-400/10 text-purple-100"
+                            : "border border-transparent text-white/45 hover:bg-white/[0.05] hover:text-white"
+                        )
+                      }
+                    >
+
+                      <span
+                        className={
+                          active
+                            ? "text-purple-200"
+                            : "text-white/35 group-hover:text-white/70"
+                        }
+                      >
+                        {item.icon}
+                      </span>
+
+                      <span className="flex-1">
+                        {item.label}
+                      </span>
+
+                      {active && (
+                        <ChevronRight
+                          size={15}
+                          className="text-purple-200/50"
+                        />
+                      )}
+
+                    </a>
+                  );
+
+                })}
+
+              </div>
+
+              {/* RECRUITER PERFORMANCE */}
+
+              {!isOwner && (
+                <div className="mt-7">
+
+                  <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/25">
+                    My Performance
+                  </p>
+
+                  <a
+                    href="/recruiter/recruiters"
+                    onClick={closeMenu}
+                    className={
+                      "group flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition " +
+                      (
+                        isActive("/recruiter/recruiters")
+                          ? "border border-purple-400/15 bg-purple-400/10 text-purple-100"
+                          : "border border-transparent text-white/45 hover:bg-white/[0.05] hover:text-white"
+                      )
+                    }
+                  >
+
+                    <span className="text-white/35 group-hover:text-purple-200">
+                      <UserRound size={18} />
+                    </span>
+
+                    <span className="flex-1">
+                      My Performance
+                    </span>
+
+                    {isActive("/recruiter/recruiters") && (
+                      <ChevronRight
+                        size={15}
+                        className="text-purple-200/50"
+                      />
+                    )}
+
+                  </a>
+
+                </div>
               )}
-            </a>
-          );
-        })}
-      </div>
-    </nav>
-  );
-}
 
-function SidebarFooter({
-  onLogout,
-  loggingOut,
-}: {
-  onLogout: () => void;
-  loggingOut: boolean;
-}) {
-  return (
-    <div className="border-t border-white/10 p-4">
-      <div className="mb-3 rounded-xl border border-white/[0.07] bg-white/[0.025] px-3 py-3">
-        <p className="text-xs font-medium text-white/60">
-          Recruiter
-        </p>
+              {/* OWNER MANAGEMENT */}
 
-        <p className="mt-1 text-[10px] text-white/25">
-          HireX recruiting workspace
-        </p>
-      </div>
+              {isOwner && (
+                <div className="mt-7">
 
-      <button
-        type="button"
-        onClick={onLogout}
-        disabled={loggingOut}
-        className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-white/40 transition hover:bg-red-400/[0.06] hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <LogOut size={18} />
+                  <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-purple-300/50">
+                    Management
+                  </p>
 
-        <span>
-          {loggingOut ? "Signing out..." : "Logout"}
-        </span>
-      </button>
+                  <div className="space-y-1">
+
+                    {ownerNavigation.map((item) => {
+
+                      const active = isActive(item.href);
+
+                      return (
+                        <a
+                          key={item.label}
+                          href={item.href}
+                          onClick={closeMenu}
+                          className={
+                            "group flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition " +
+                            (
+                              active
+                                ? "border border-purple-400/15 bg-purple-400/10 text-purple-100"
+                                : "border border-transparent text-white/45 hover:bg-white/[0.05] hover:text-white"
+                            )
+                          }
+                        >
+
+                          <span
+                            className={
+                              active
+                                ? "text-purple-200"
+                                : "text-white/35 group-hover:text-purple-200"
+                            }
+                          >
+                            {item.icon}
+                          </span>
+
+                          <span className="flex-1">
+                            {item.label}
+                          </span>
+
+                          {active && (
+                            <ChevronRight
+                              size={15}
+                              className="text-purple-200/50"
+                            />
+                          )}
+
+                        </a>
+                      );
+
+                    })}
+
+                  </div>
+
+                </div>
+              )}
+
+            </nav>
+
+            {/* SIDEBAR ACCOUNT */}
+
+            <div className="shrink-0 border-t border-white/10 p-4">
+
+              <div className="mb-3 flex items-center gap-3 rounded-xl border border-white/[0.07] bg-white/[0.025] px-3 py-3">
+
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-purple-400/10 text-sm font-semibold text-purple-200">
+                  {userName.charAt(0).toUpperCase()}
+                </div>
+
+                <div className="min-w-0">
+
+                  <p className="truncate text-xs font-semibold text-white/80">
+                    {userName}
+                  </p>
+
+                  <p className="mt-1 truncate text-[10px] text-purple-300/50">
+                    {userRole}
+                  </p>
+
+                </div>
+
+              </div>
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                disabled={loggingOut}
+                className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-white/45 transition hover:bg-red-400/[0.06] hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+
+                <LogOut size={18} />
+
+                <span>
+                  {loggingOut
+                    ? "Signing out..."
+                    : "Log out"}
+                </span>
+
+              </button>
+
+            </div>
+
+          </aside>
+
+        </div>
+      )}
+
+      {/* MAIN CONTENT */}
+
+      <main className="min-h-screen pt-16">
+        {children}
+      </main>
+
     </div>
   );
 }

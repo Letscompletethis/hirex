@@ -1,1 +1,1734 @@
-export { default } from "../../candidates/page";
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  Search,
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsUpDown,
+  Check,
+  X,
+  FileText,
+  BriefcaseBusiness,
+  Filter,
+  Users,
+  Loader2,
+  ArrowLeft,
+  Mail,
+  Phone,
+  ExternalLink,
+  User,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { supabase } from "../../../lib/supabase";
+
+type Candidate = {
+  ID?: string;
+  id?: string;
+  candidate_id: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+  phone: string | null;
+  resume_path: string | null;
+  job_id: string | null;
+  job_title: string | null;
+  status: string | null;
+  created_at: string | null;
+  current_job_title: string | null;
+};
+
+type Job = {
+  id: string;
+  job_id?: string | null;
+  title: string;
+  company?: string | null;
+  status?: string | null;
+};
+
+const PAGE_SIZE = 100;
+
+const STATUS_OPTIONS = [
+  "new",
+  "viewed",
+  "submissions",
+  "interview",
+  "offer",
+  "hired",
+  "rejected",
+];
+
+export default function RecruiterCandidatesPage() {
+  const router = useRouter();
+
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
+
+  const [loading, setLoading] = useState(true);
+  const [assigning, setAssigning] = useState(false);
+  const [changingStatus, setChangingStatus] = useState(false);
+
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [jobFilter, setJobFilter] = useState("all");
+
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const [sortColumn, setSortColumn] =
+    useState<string>("created_at");
+
+  const [sortDirection, setSortDirection] =
+    useState<"asc" | "desc">("desc");
+
+  const [assignJobId, setAssignJobId] = useState("");
+
+  const [selectedCandidateIndex, setSelectedCandidateIndex] =
+    useState<number | null>(null);
+
+  const [resumeUrl, setResumeUrl] = useState("");
+
+  async function loadCandidates() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const candidatesRequest = await supabase
+        .from("candidates")
+        .select("*");
+
+      if (candidatesRequest.error) {
+        throw new Error(
+          candidatesRequest.error.message ||
+            "Could not load candidates."
+        );
+      }
+
+      setCandidates(
+        (candidatesRequest.data as Candidate[]) || []
+      );
+
+      const jobsRequest = await supabase
+        .from("jobs")
+        .select("*")
+        .order("created_at", {
+          ascending: false,
+        });
+
+      if (jobsRequest.error) {
+        throw new Error(
+          jobsRequest.error.message ||
+            "Could not load jobs."
+        );
+      }
+
+      setJobs((jobsRequest.data as Job[]) || []);
+    } catch (err) {
+      console.error("Recruiter candidates error:", err);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not load candidate pool."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadCandidates();
+  }, []);
+
+  function getCandidateDbId(candidate: Candidate) {
+    return candidate.ID || candidate.id || "";
+  }
+
+  const filteredCandidates = useMemo(() => {
+    const searchValue = search
+      .toLowerCase()
+      .trim();
+
+    const result = candidates.filter((candidate) => {
+      if (
+        statusFilter !== "all" &&
+        (candidate.status || "new").toLowerCase() !==
+          statusFilter.toLowerCase()
+      ) {
+        return false;
+      }
+
+      if (
+        jobFilter !== "all" &&
+        (candidate.job_id || "") !== jobFilter
+      ) {
+        return false;
+      }
+
+      if (!searchValue) {
+        return true;
+      }
+
+      const searchable = [
+        candidate.candidate_id,
+        candidate.first_name,
+        candidate.last_name,
+        candidate.email,
+        candidate.phone,
+        candidate.current_job_title,
+        candidate.job_title,
+        candidate.status,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return searchable.includes(searchValue);
+    });
+
+    result.sort((a, b) => {
+      let aValue = "";
+      let bValue = "";
+
+      if (sortColumn === "name") {
+        aValue =
+          `${a.first_name || ""} ${a.last_name || ""}`.trim();
+
+        bValue =
+          `${b.first_name || ""} ${b.last_name || ""}`.trim();
+      } else if (sortColumn === "candidate_id") {
+        aValue = a.candidate_id || "";
+        bValue = b.candidate_id || "";
+      } else if (sortColumn === "current_job_title") {
+        aValue = a.current_job_title || "";
+        bValue = b.current_job_title || "";
+      } else if (sortColumn === "job_title") {
+        aValue = a.job_title || "";
+        bValue = b.job_title || "";
+      } else if (sortColumn === "status") {
+        aValue = a.status || "";
+        bValue = b.status || "";
+      } else if (sortColumn === "created_at") {
+        aValue = a.created_at || "";
+        bValue = b.created_at || "";
+      }
+
+      const comparison = aValue
+        .toLowerCase()
+        .localeCompare(bValue.toLowerCase());
+
+      return sortDirection === "asc"
+        ? comparison
+        : -comparison;
+    });
+
+    return result;
+  }, [
+    candidates,
+    search,
+    statusFilter,
+    jobFilter,
+    sortColumn,
+    sortDirection,
+  ]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(
+      filteredCandidates.length / PAGE_SIZE
+    )
+  );
+
+  const safePage = Math.min(
+    currentPage,
+    totalPages
+  );
+
+  const pageStart =
+    (safePage - 1) * PAGE_SIZE;
+
+  const pageEnd = Math.min(
+    pageStart + PAGE_SIZE,
+    filteredCandidates.length
+  );
+
+  const visibleCandidates =
+    filteredCandidates.slice(
+      pageStart,
+      pageEnd
+    );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [
+    search,
+    statusFilter,
+    jobFilter,
+  ]);
+
+  function toggleCandidate(candidate: Candidate) {
+    const id = getCandidateDbId(candidate);
+
+    if (!id) return;
+
+    setSelectedIds((previous) =>
+      previous.includes(id)
+        ? previous.filter(
+            (item) => item !== id
+          )
+        : [...previous, id]
+    );
+  }
+
+  function toggleAllVisible() {
+    const visibleIds = visibleCandidates
+      .map(getCandidateDbId)
+      .filter(Boolean);
+
+    const allSelected =
+      visibleIds.length > 0 &&
+      visibleIds.every((id) =>
+        selectedIds.includes(id)
+      );
+
+    if (allSelected) {
+      setSelectedIds((previous) =>
+        previous.filter(
+          (id) =>
+            !visibleIds.includes(id)
+        )
+      );
+    } else {
+      setSelectedIds((previous) =>
+        Array.from(
+          new Set([
+            ...previous,
+            ...visibleIds,
+          ])
+        )
+      );
+    }
+  }
+
+  function handleSort(column: string) {
+    if (sortColumn === column) {
+      setSortDirection(
+        sortDirection === "asc"
+          ? "desc"
+          : "asc"
+      );
+    } else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  }
+
+  async function assignCandidates() {
+    if (!assignJobId) {
+      setError("Please select a job first.");
+      return;
+    }
+
+    if (selectedIds.length === 0) {
+      setError(
+        "Please select at least one candidate."
+      );
+      return;
+    }
+
+    const selectedJob = jobs.find(
+      (job) => job.id === assignJobId
+    );
+
+    if (!selectedJob) {
+      setError("Selected job was not found.");
+      return;
+    }
+
+    setAssigning(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      for (const candidateId of selectedIds) {
+        let result = await supabase
+          .from("candidates")
+          .update({
+            job_id: selectedJob.id,
+            job_title: selectedJob.title,
+          })
+          .eq("ID", candidateId);
+
+        if (result.error) {
+          result = await supabase
+            .from("candidates")
+            .update({
+              job_id: selectedJob.id,
+              job_title: selectedJob.title,
+            })
+            .eq("id", candidateId);
+        }
+
+        if (result.error) {
+          throw new Error(
+            result.error.message
+          );
+        }
+      }
+
+      setSuccess(
+        `${selectedIds.length} candidate${
+          selectedIds.length === 1
+            ? ""
+            : "s"
+        } assigned to ${selectedJob.title}.`
+      );
+
+      setSelectedIds([]);
+      setAssignJobId("");
+
+      await loadCandidates();
+    } catch (err) {
+      console.error("Assignment error:", err);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not assign candidates."
+      );
+    } finally {
+      setAssigning(false);
+    }
+  }
+
+  async function openCandidate(candidate: Candidate) {
+    const index =
+      filteredCandidates.findIndex(
+        (item) =>
+          getCandidateDbId(item) ===
+          getCandidateDbId(candidate)
+      );
+
+    setSelectedCandidateIndex(
+      index >= 0 ? index : null
+    );
+
+    setResumeUrl("");
+    setError("");
+
+    if (
+      (candidate.status || "new").toLowerCase() ===
+        "new" &&
+      getCandidateDbId(candidate)
+    ) {
+      await updateCandidateStatus(
+        candidate,
+        "viewed",
+        true
+      );
+    }
+
+    if (candidate.resume_path) {
+      await openResume(candidate.resume_path);
+    }
+  }
+
+  async function openResume(path: string) {
+    try {
+      let finalPath = path;
+
+      if (
+        finalPath.startsWith("http://") ||
+        finalPath.startsWith("https://")
+      ) {
+        setResumeUrl(finalPath);
+        return;
+      }
+
+      const { data, error } =
+        await supabase.storage
+          .from("resumes")
+          .createSignedUrl(
+            finalPath,
+            60 * 60
+          );
+
+      if (error || !data?.signedUrl) {
+        setError(
+          error?.message ||
+            "Unable to open resume."
+        );
+        return;
+      }
+
+      setResumeUrl(data.signedUrl);
+    } catch (err) {
+      console.error(
+        "Resume error:",
+        err
+      );
+
+      setError(
+        "Unable to open resume."
+      );
+    }
+  }
+
+  async function updateCandidateStatus(
+    candidate: Candidate,
+    newStatus: string,
+    silent = false
+  ) {
+    const candidateId =
+      getCandidateDbId(candidate);
+
+    if (!candidateId) {
+      setError(
+        "Candidate database ID is missing."
+      );
+      return;
+    }
+
+    setChangingStatus(true);
+
+    if (!silent) {
+      setError("");
+      setSuccess("");
+    }
+
+    try {
+      let result = await supabase
+        .from("candidates")
+        .update({
+          status: newStatus,
+        })
+        .eq("ID", candidateId);
+
+      if (result.error) {
+        result = await supabase
+          .from("candidates")
+          .update({
+            status: newStatus,
+          })
+          .eq("id", candidateId);
+      }
+
+      if (result.error) {
+        throw new Error(
+          result.error.message
+        );
+      }
+
+      setCandidates((previous) =>
+        previous.map((item) =>
+          getCandidateDbId(item) ===
+          candidateId
+            ? {
+                ...item,
+                status: newStatus,
+              }
+            : item
+        )
+      );
+
+      if (!silent) {
+        setSuccess(
+          `Candidate status changed to ${formatStatus(
+            newStatus
+          )}.`
+        );
+      }
+    } catch (err) {
+      console.error(
+        "Status update error:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to update candidate status."
+      );
+    } finally {
+      setChangingStatus(false);
+    }
+  }
+
+  function closeProfile() {
+    setSelectedCandidateIndex(null);
+    setResumeUrl("");
+  }
+
+  function goToPreviousCandidate() {
+    if (
+      selectedCandidateIndex === null ||
+      filteredCandidates.length === 0
+    ) {
+      return;
+    }
+
+    if (selectedCandidateIndex <= 0) {
+      return;
+    }
+
+    const candidate =
+      filteredCandidates[
+        selectedCandidateIndex - 1
+      ];
+
+    setSelectedCandidateIndex(
+      selectedCandidateIndex - 1
+    );
+
+    setResumeUrl("");
+
+    if (
+      (candidate.status || "new").toLowerCase() ===
+      "new"
+    ) {
+      updateCandidateStatus(
+        candidate,
+        "viewed",
+        true
+      );
+    }
+
+    if (candidate.resume_path) {
+      openResume(candidate.resume_path);
+    }
+  }
+
+  function goToNextCandidate() {
+    if (
+      selectedCandidateIndex === null ||
+      filteredCandidates.length === 0
+    ) {
+      return;
+    }
+
+    if (
+      selectedCandidateIndex >=
+      filteredCandidates.length - 1
+    ) {
+      return;
+    }
+
+    const candidate =
+      filteredCandidates[
+        selectedCandidateIndex + 1
+      ];
+
+    setSelectedCandidateIndex(
+      selectedCandidateIndex + 1
+    );
+
+    setResumeUrl("");
+
+    if (
+      (candidate.status || "new").toLowerCase() ===
+      "new"
+    ) {
+      updateCandidateStatus(
+        candidate,
+        "viewed",
+        true
+      );
+    }
+
+    if (candidate.resume_path) {
+      openResume(candidate.resume_path);
+    }
+  }
+
+  function clearFilters() {
+    setSearch("");
+    setStatusFilter("all");
+    setJobFilter("all");
+    setCurrentPage(1);
+  }
+
+  function formatDate(value: string | null) {
+    if (!value) return "—";
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return "—";
+    }
+
+    return date.toLocaleDateString(
+      undefined,
+      {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }
+    );
+  }
+
+  function formatStatus(status: string | null) {
+    const value = (
+      status || "new"
+    ).toLowerCase();
+
+    return value
+      .charAt(0)
+      .toUpperCase() +
+      value.slice(1);
+  }
+
+  function statusClass(status: string | null) {
+    const value = (
+      status || "new"
+    ).toLowerCase();
+
+    if (value === "hired") {
+      return "border-green-400/20 bg-green-400/10 text-green-300";
+    }
+
+    if (value === "interview") {
+      return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
+    }
+
+    if (value === "offer") {
+      return "border-orange-400/20 bg-orange-400/10 text-orange-300";
+    }
+
+    if (value === "rejected") {
+      return "border-red-400/20 bg-red-400/10 text-red-300";
+    }
+
+    if (value === "submissions") {
+      return "border-blue-400/20 bg-blue-400/10 text-blue-300";
+    }
+
+    if (value === "viewed") {
+      return "border-purple-400/20 bg-purple-400/10 text-purple-300";
+    }
+
+    return "border-white/10 bg-white/[0.04] text-white/50";
+  }
+
+  const selectedCandidate =
+    selectedCandidateIndex !== null
+      ? filteredCandidates[
+          selectedCandidateIndex
+        ]
+      : null;
+
+  const allVisibleSelected =
+    visibleCandidates.length > 0 &&
+    visibleCandidates
+      .map(getCandidateDbId)
+      .filter(Boolean)
+      .every((id) =>
+        selectedIds.includes(id)
+      );
+
+  return (
+    <main className="min-h-screen bg-[#03040a] text-white">
+      <div className="mx-auto max-w-[1700px] px-5 py-8 sm:px-8 lg:py-10">
+
+        <div className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <button
+              type="button"
+              onClick={() =>
+                router.push("/recruiter")
+              }
+              className="mb-5 inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/50 transition hover:bg-white/[0.07] hover:text-white"
+            >
+              <ArrowLeft size={14} />
+              Back to Recruiter Dashboard
+            </button>
+
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-purple-200/70">
+              HireX ATS
+            </p>
+
+            <h1 className="mt-3 text-4xl font-semibold tracking-[-0.04em]">
+              Candidate Pool
+            </h1>
+
+            <p className="mt-2 text-sm text-white/40">
+              Search, filter, review and manage your candidates.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={loadCandidates}
+            disabled={loading}
+            className="inline-flex w-fit items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-white/70 transition hover:bg-white/[0.08] hover:text-white disabled:opacity-50"
+          >
+            <RefreshCw
+              size={16}
+              className={
+                loading
+                  ? "animate-spin"
+                  : ""
+              }
+            />
+            Refresh
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-5 flex items-start justify-between gap-4 rounded-xl border border-red-400/20 bg-red-400/[0.06] px-4 py-3">
+            <p className="text-sm text-red-200">
+              {error}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setError("")}
+              className="text-red-200/50 hover:text-red-200"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        {success && (
+          <div className="mb-5 flex items-center justify-between gap-4 rounded-xl border border-green-400/20 bg-green-400/[0.06] px-4 py-3">
+            <p className="text-sm text-green-200">
+              {success}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setSuccess("")}
+              className="text-green-200/50 hover:text-green-200"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        <div className="mb-5 grid gap-3 sm:grid-cols-3">
+          <SummaryCard
+            icon={<Users size={18} />}
+            label="Total Candidates"
+            value={candidates.length}
+          />
+
+          <SummaryCard
+            icon={<Filter size={18} />}
+            label="Showing"
+            value={filteredCandidates.length}
+          />
+
+          <SummaryCard
+            icon={<Check size={18} />}
+            label="Selected"
+            value={selectedIds.length}
+          />
+        </div>
+
+        <section className="mb-5 rounded-2xl border border-white/10 bg-white/[0.025] p-4">
+          <div className="flex flex-col gap-3 xl:flex-row">
+            <div className="relative min-w-0 flex-1">
+              <Search
+                size={17}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/25"
+              />
+
+              <input
+                type="text"
+                value={search}
+                onChange={(event) =>
+                  setSearch(
+                    event.target.value
+                  )
+                }
+                placeholder="Search candidate ID, name, email, phone, title..."
+                className="h-11 w-full rounded-xl border border-white/10 bg-black/20 pl-10 pr-4 text-sm text-white outline-none placeholder:text-white/25 focus:border-purple-400/40"
+              />
+            </div>
+
+            <select
+              value={statusFilter}
+              onChange={(event) =>
+                setStatusFilter(
+                  event.target.value
+                )
+              }
+              className="h-11 rounded-xl border border-white/10 bg-[#090a11] px-4 text-sm text-white outline-none focus:border-purple-400/40"
+            >
+              <option value="all">
+                All Statuses
+              </option>
+
+              {STATUS_OPTIONS.map(
+                (status) => (
+                  <option
+                    key={status}
+                    value={status}
+                  >
+                    {formatStatus(status)}
+                  </option>
+                )
+              )}
+            </select>
+
+            <select
+              value={jobFilter}
+              onChange={(event) =>
+                setJobFilter(
+                  event.target.value
+                )
+              }
+              className="h-11 rounded-xl border border-white/10 bg-[#090a11] px-4 text-sm text-white outline-none focus:border-purple-400/40"
+            >
+              <option value="all">
+                All Jobs
+              </option>
+
+              {jobs.map((job) => (
+                <option
+                  key={job.id}
+                  value={job.id}
+                >
+                  {job.title}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="h-11 rounded-xl border border-white/10 bg-white/[0.03] px-4 text-sm text-white/50 transition hover:bg-white/[0.07] hover:text-white"
+            >
+              Clear
+            </button>
+          </div>
+        </section>
+
+        {selectedIds.length > 0 && (
+          <section className="mb-5 rounded-2xl border border-purple-400/20 bg-purple-400/[0.05] p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-purple-100">
+                  {selectedIds.length} candidate
+                  {selectedIds.length === 1
+                    ? ""
+                    : "s"} selected
+                </p>
+
+                <p className="mt-1 text-xs text-white/35">
+                  Assign the selected candidates to a job.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <select
+                  value={assignJobId}
+                  onChange={(event) =>
+                    setAssignJobId(
+                      event.target.value
+                    )
+                  }
+                  className="h-10 min-w-[260px] rounded-lg border border-white/10 bg-[#090a11] px-3 text-sm text-white outline-none focus:border-purple-400/40"
+                >
+                  <option value="">
+                    Select job...
+                  </option>
+
+                  {jobs.map((job) => (
+                    <option
+                      key={job.id}
+                      value={job.id}
+                    >
+                      {job.title}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={assignCandidates}
+                  disabled={
+                    assigning ||
+                    !assignJobId
+                  }
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-purple-500 px-4 text-sm font-semibold text-white transition hover:bg-purple-400 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {assigning ? (
+                    <Loader2
+                      size={15}
+                      className="animate-spin"
+                    />
+                  ) : (
+                    <BriefcaseBusiness
+                      size={15}
+                    />
+                  )}
+
+                  Assign to Job
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        <section className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.025]">
+          {loading ? (
+            <div className="flex min-h-[400px] items-center justify-center text-white/35">
+              <Loader2
+                size={20}
+                className="mr-3 animate-spin"
+              />
+              Loading candidate pool...
+            </div>
+          ) : filteredCandidates.length === 0 ? (
+            <div className="flex min-h-[400px] flex-col items-center justify-center px-5 text-center">
+              <Users
+                size={40}
+                className="text-white/10"
+              />
+
+              <h2 className="mt-5 text-lg font-semibold">
+                No candidates found
+              </h2>
+
+              <p className="mt-2 max-w-md text-sm text-white/35">
+                Try changing your search or filters.
+              </p>
+
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="mt-5 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2 text-xs text-white/60 hover:bg-white/[0.08] hover:text-white"
+              >
+                Clear Filters
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1250px] border-collapse">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-white/[0.025] text-left">
+                      <th className="w-[50px] px-4 py-4">
+                        <input
+                          type="checkbox"
+                          checked={
+                            allVisibleSelected
+                          }
+                          onChange={
+                            toggleAllVisible
+                          }
+                          className="h-4 w-4 rounded accent-purple-500"
+                        />
+                      </th>
+
+                      <SortableHeader
+                        label="Candidate ID"
+                        column="candidate_id"
+                        sortColumn={sortColumn}
+                        sortDirection={
+                          sortDirection
+                        }
+                        onSort={handleSort}
+                      />
+
+                      <SortableHeader
+                        label="Candidate"
+                        column="name"
+                        sortColumn={sortColumn}
+                        sortDirection={
+                          sortDirection
+                        }
+                        onSort={handleSort}
+                      />
+
+                      <SortableHeader
+                        label="Current Title"
+                        column="current_job_title"
+                        sortColumn={sortColumn}
+                        sortDirection={
+                          sortDirection
+                        }
+                        onSort={handleSort}
+                      />
+
+                      <th className="px-4 py-4 text-xs font-semibold uppercase tracking-wider text-white/30">
+                        Contact
+                      </th>
+
+                      <SortableHeader
+                        label="Assigned Job"
+                        column="job_title"
+                        sortColumn={sortColumn}
+                        sortDirection={
+                          sortDirection
+                        }
+                        onSort={handleSort}
+                      />
+
+                      <SortableHeader
+                        label="Status"
+                        column="status"
+                        sortColumn={sortColumn}
+                        sortDirection={
+                          sortDirection
+                        }
+                        onSort={handleSort}
+                      />
+
+                      <SortableHeader
+                        label="Added"
+                        column="created_at"
+                        sortColumn={sortColumn}
+                        sortDirection={
+                          sortDirection
+                        }
+                        onSort={handleSort}
+                      />
+
+                      <th className="px-4 py-4 text-xs font-semibold uppercase tracking-wider text-white/30">
+                        Resume
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {visibleCandidates.map(
+                      (candidate) => {
+                        const databaseId =
+                          getCandidateDbId(
+                            candidate
+                          );
+
+                        const isSelected =
+                          selectedIds.includes(
+                            databaseId
+                          );
+
+                        const isNew =
+                          (
+                            candidate.status ||
+                            "new"
+                          ).toLowerCase() ===
+                          "new";
+
+                        const fullName =
+                          `${candidate.first_name || ""} ${
+                            candidate.last_name || ""
+                          }`.trim() ||
+                          "Unnamed Candidate";
+
+                        return (
+                          <tr
+                            key={
+                              databaseId ||
+                              candidate.candidate_id ||
+                              fullName
+                            }
+                            className={
+                              "border-b border-white/[0.06] transition hover:bg-white/[0.025] " +
+                              (isSelected
+                                ? "bg-purple-400/[0.04]"
+                                : "")
+                            }
+                          >
+                            <td className="px-4 py-4">
+                              <input
+                                type="checkbox"
+                                checked={
+                                  isSelected
+                                }
+                                onChange={() =>
+                                  toggleCandidate(
+                                    candidate
+                                  )
+                                }
+                                className="h-4 w-4 rounded accent-purple-500"
+                              />
+                            </td>
+
+                            <td className="px-4 py-4">
+                              <span className="font-mono text-xs font-medium text-purple-200">
+                                {candidate.candidate_id ||
+                                  "—"}
+                              </span>
+                            </td>
+
+                            <td className="px-4 py-4">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openCandidate(
+                                    candidate
+                                  )
+                                }
+                                className="text-left"
+                              >
+                                <div className="min-w-[170px]">
+                                  <p
+                                    className={
+                                      "text-sm transition hover:text-purple-300 " +
+                                      (isNew
+                                        ? "font-semibold text-blue-300"
+                                        : "font-normal text-white")
+                                    }
+                                  >
+                                    {fullName}
+                                  </p>
+
+                                  <p className="mt-1 text-xs text-white/30">
+                                    {candidate.email ||
+                                      "No email"}
+                                  </p>
+                                </div>
+                              </button>
+                            </td>
+
+                            <td className="px-4 py-4">
+                              <p className="max-w-[220px] truncate text-sm text-white/60">
+                                {candidate.current_job_title ||
+                                  "—"}
+                              </p>
+                            </td>
+
+                            <td className="px-4 py-4">
+                              <div className="space-y-1">
+                                <p className="text-xs text-white/55">
+                                  {candidate.email ||
+                                    "—"}
+                                </p>
+
+                                <p className="text-xs text-white/30">
+                                  {candidate.phone ||
+                                    "—"}
+                                </p>
+                              </div>
+                            </td>
+
+                            <td className="px-4 py-4">
+                              {candidate.job_title ? (
+                                <div className="flex max-w-[220px] items-center gap-2">
+                                  <BriefcaseBusiness
+                                    size={14}
+                                    className="shrink-0 text-blue-300/60"
+                                  />
+
+                                  <span className="truncate text-xs text-white/55">
+                                    {
+                                      candidate.job_title
+                                    }
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-white/20">
+                                  Unassigned
+                                </span>
+                              )}
+                            </td>
+
+                            <td className="px-4 py-4">
+                              <select
+                                value={
+                                  candidate.status ||
+                                  "new"
+                                }
+                                disabled={
+                                  changingStatus
+                                }
+                                onChange={(
+                                  event
+                                ) =>
+                                  updateCandidateStatus(
+                                    candidate,
+                                    event.target.value
+                                  )
+                                }
+                                className={
+                                  "rounded-lg border bg-[#090a11] px-3 py-2 text-xs outline-none focus:border-purple-400/50 " +
+                                  statusClass(
+                                    candidate.status
+                                  )
+                                }
+                              >
+                                {STATUS_OPTIONS.map(
+                                  (
+                                    status
+                                  ) => (
+                                    <option
+                                      key={
+                                        status
+                                      }
+                                      value={
+                                        status
+                                      }
+                                      className="bg-[#090a11] text-white"
+                                    >
+                                      {formatStatus(
+                                        status
+                                      )}
+                                    </option>
+                                  )
+                                )}
+                              </select>
+                            </td>
+
+                            <td className="whitespace-nowrap px-4 py-4 text-xs text-white/30">
+                              {formatDate(
+                                candidate.created_at
+                              )}
+                            </td>
+
+                            <td className="px-4 py-4">
+                              {candidate.resume_path ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openCandidate(
+                                      candidate
+                                    )
+                                  }
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/60 transition hover:bg-white/[0.08] hover:text-white"
+                                >
+                                  <FileText
+                                    size={14}
+                                  />
+                                  Resume
+                                </button>
+                              ) : (
+                                <span className="text-xs text-white/20">
+                                  No resume
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      }
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex flex-col gap-3 border-t border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-xs text-white/35">
+                  Showing{" "}
+                  <span className="text-white/60">
+                    {filteredCandidates.length ===
+                    0
+                      ? 0
+                      : pageStart + 1}
+                  </span>{" "}
+                  to{" "}
+                  <span className="text-white/60">
+                    {pageEnd}
+                  </span>{" "}
+                  of{" "}
+                  <span className="text-white/60">
+                    {
+                      filteredCandidates.length
+                    }
+                  </span>{" "}
+                  candidates
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={safePage <= 1}
+                    onClick={() =>
+                      setCurrentPage(
+                        Math.max(
+                          1,
+                          safePage - 1
+                        )
+                      )
+                    }
+                    className="inline-flex h-9 items-center gap-1 rounded-lg border border-white/10 bg-white/[0.03] px-3 text-xs text-white/50 transition hover:bg-white/[0.07] hover:text-white disabled:cursor-not-allowed disabled:opacity-25"
+                  >
+                    <ChevronLeft size={14} />
+                    Previous
+                  </button>
+
+                  <span className="px-3 text-xs text-white/40">
+                    Page{" "}
+                    <span className="font-medium text-white/70">
+                      {safePage}
+                    </span>{" "}
+                    of{" "}
+                    <span className="font-medium text-white/70">
+                      {totalPages}
+                    </span>
+                  </span>
+
+                  <button
+                    type="button"
+                    disabled={
+                      safePage >=
+                      totalPages
+                    }
+                    onClick={() =>
+                      setCurrentPage(
+                        Math.min(
+                          totalPages,
+                          safePage + 1
+                        )
+                      )
+                    }
+                    className="inline-flex h-9 items-center gap-1 rounded-lg border border-white/10 bg-white/[0.03] px-3 text-xs text-white/50 transition hover:bg-white/[0.07] hover:text-white disabled:cursor-not-allowed disabled:opacity-25"
+                  >
+                    Next
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
+      </div>
+
+      {selectedCandidate && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm">
+          <div className="flex h-full w-full items-center justify-center p-4">
+            <div className="flex h-[92vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#080910] shadow-2xl">
+
+              <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-xl bg-purple-400/10 p-2.5 text-purple-200">
+                    <User size={20} />
+                  </div>
+
+                  <div>
+                    <h2 className="text-lg font-semibold">
+                      {selectedCandidate.first_name}{" "}
+                      {selectedCandidate.last_name}
+                    </h2>
+
+                    <p className="text-xs text-white/35">
+                      {selectedCandidate.candidate_id ||
+                        "Candidate"}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeProfile}
+                  className="rounded-lg border border-white/10 bg-white/[0.03] p-2 text-white/50 hover:bg-white/[0.08] hover:text-white"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="flex shrink-0 flex-col gap-4 border-b border-white/10 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={
+                      selectedCandidateIndex ===
+                        null ||
+                      selectedCandidateIndex <=
+                        0
+                    }
+                    onClick={
+                      goToPreviousCandidate
+                    }
+                    className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/60 hover:bg-white/[0.08] hover:text-white disabled:opacity-25"
+                  >
+                    <ChevronLeft size={14} />
+                    Previous
+                  </button>
+
+                  <span className="text-xs text-white/30">
+                    Candidate{" "}
+                    {(selectedCandidateIndex ?? 0) +
+                      1}{" "}
+                    of{" "}
+                    {
+                      filteredCandidates.length
+                    }
+                  </span>
+
+                  <button
+                    type="button"
+                    disabled={
+                      selectedCandidateIndex ===
+                        null ||
+                      selectedCandidateIndex >=
+                        filteredCandidates.length -
+                          1
+                    }
+                    onClick={
+                      goToNextCandidate
+                    }
+                    className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/60 hover:bg-white/[0.08] hover:text-white disabled:opacity-25"
+                  >
+                    Next
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+
+                <select
+                  value={
+                    selectedCandidate.status ||
+                    "new"
+                  }
+                  disabled={changingStatus}
+                  onChange={(event) =>
+                    updateCandidateStatus(
+                      selectedCandidate,
+                      event.target.value
+                    )
+                  }
+                  className={
+                    "rounded-lg border bg-[#090a11] px-4 py-2.5 text-xs font-medium outline-none focus:border-purple-400/50 " +
+                    statusClass(
+                      selectedCandidate.status
+                    )
+                  }
+                >
+                  {STATUS_OPTIONS.map(
+                    (status) => (
+                      <option
+                        key={status}
+                        value={status}
+                        className="bg-[#090a11] text-white"
+                      >
+                        {formatStatus(status)}
+                      </option>
+                    )
+                  )}
+                </select>
+              </div>
+
+              <div className="grid min-h-0 flex-1 lg:grid-cols-[360px_1fr]">
+
+                <aside className="overflow-y-auto border-b border-white/10 p-5 lg:border-b-0 lg:border-r">
+                  <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-white/30">
+                    Candidate Details
+                  </h3>
+
+                  <div className="mt-5 space-y-5">
+                    <div>
+                      <p className="text-xs text-white/25">
+                        Full Name
+                      </p>
+
+                      <p className="mt-1 text-sm text-white">
+                        {selectedCandidate.first_name}{" "}
+                        {selectedCandidate.last_name}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-white/25">
+                        Email
+                      </p>
+
+                      <div className="mt-1 flex items-center gap-2 text-sm text-white/70">
+                        <Mail size={14} />
+                        {selectedCandidate.email ||
+                          "—"}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-white/25">
+                        Phone
+                      </p>
+
+                      <div className="mt-1 flex items-center gap-2 text-sm text-white/70">
+                        <Phone size={14} />
+                        {selectedCandidate.phone ||
+                          "—"}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-white/25">
+                        Current Title
+                      </p>
+
+                      <p className="mt-1 text-sm text-white/70">
+                        {selectedCandidate.current_job_title ||
+                          "—"}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-white/25">
+                        Assigned Job
+                      </p>
+
+                      <p className="mt-1 text-sm text-white/70">
+                        {selectedCandidate.job_title ||
+                          "Unassigned"}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-white/25">
+                        Candidate ID
+                      </p>
+
+                      <p className="mt-1 font-mono text-sm text-purple-200">
+                        {selectedCandidate.candidate_id ||
+                          "—"}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-white/25">
+                        Status
+                      </p>
+
+                      <span
+                        className={
+                          "mt-2 inline-flex rounded-full border px-3 py-1.5 text-xs " +
+                          statusClass(
+                            selectedCandidate.status
+                          )
+                        }
+                      >
+                        {formatStatus(
+                          selectedCandidate.status
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                </aside>
+
+                <div className="min-h-0 bg-[#11121a]">
+                  {resumeUrl ? (
+                    <div className="flex h-full flex-col">
+                      <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
+                        <div className="flex items-center gap-2 text-xs text-white/50">
+                          <FileText
+                            size={15}
+                          />
+                          Resume
+                        </div>
+
+                        <a
+                          href={resumeUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/60 hover:bg-white/[0.08] hover:text-white"
+                        >
+                          <ExternalLink
+                            size={13}
+                          />
+                          Open in New Tab
+                        </a>
+                      </div>
+
+                      <iframe
+                        src={resumeUrl}
+                        title="Candidate Resume"
+                        className="min-h-0 flex-1 w-full"
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center px-5 text-center">
+                      <FileText
+                        size={45}
+                        className="text-white/10"
+                      />
+
+                      <h3 className="mt-5 text-lg font-semibold">
+                        Resume unavailable
+                      </h3>
+
+                      <p className="mt-2 max-w-md text-sm text-white/35">
+                        This candidate does not currently have a resume that can be displayed.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
+
+function SummaryCard({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">
+      <div className="flex items-center gap-3">
+        <div className="rounded-xl bg-purple-400/10 p-2.5 text-purple-200">
+          {icon}
+        </div>
+
+        <div>
+          <p className="text-[11px] uppercase tracking-wider text-white/30">
+            {label}
+          </p>
+
+          <p className="mt-1 text-2xl font-semibold">
+            {value}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SortableHeader({
+  label,
+  column,
+  sortColumn,
+  sortDirection,
+  onSort,
+}: {
+  label: string;
+  column: string;
+  sortColumn: string;
+  sortDirection: "asc" | "desc";
+  onSort: (column: string) => void;
+}) {
+  const active =
+    sortColumn === column;
+
+  return (
+    <th className="px-4 py-4">
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-white/30 transition hover:text-white/70"
+      >
+        {label}
+
+        <ChevronsUpDown
+          size={13}
+          className={
+            active
+              ? "text-purple-300"
+              : "text-white/20"
+          }
+        />
+
+        {active && (
+          <span className="text-[9px] text-purple-300">
+            {sortDirection === "asc"
+              ? "↑"
+              : "↓"}
+          </span>
+        )}
+      </button>
+    </th>
+  );
+}
