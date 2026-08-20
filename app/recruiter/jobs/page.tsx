@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -125,6 +125,22 @@ function applicationMatchesJob(
 }
 
 export default function RecruiterJobsPage() {
+  return (
+    <Suspense fallback={<JobsPageLoading />}>
+      <RecruiterJobsContent />
+    </Suspense>
+  );
+}
+
+function JobsPageLoading() {
+  return (
+    <main className="flex min-h-[60vh] items-center justify-center">
+      <Loader2 size={24} className="animate-spin text-purple-300" />
+    </main>
+  );
+}
+
+function RecruiterJobsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 

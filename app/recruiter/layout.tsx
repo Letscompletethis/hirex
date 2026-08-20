@@ -111,54 +111,90 @@ export default function RecruiterLayout({
   const [userName, setUserName] = useState("Recruiter");
   const [userRole, setUserRole] = useState("Recruiter");
 
-  const isLoginPage = pathname === "/recruiter/login";
+  const isPublicAuthPage =
+    pathname === "/recruiter/login" ||
+    pathname === "/recruiter/reset-password";
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadUser() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
 
-      if (!user) {
-        return;
-      }
+        if (authError) {
+          console.error("Unable to get current user:", authError);
+          return;
+        }
 
-      const email = user.email || "";
+        if (!user) {
+          return;
+        }
 
-      const fullName =
-        user.user_metadata?.full_name ||
-        user.user_metadata?.name ||
-        "";
+        const email = user.email || "";
 
-      const role = String(
-        user.user_metadata?.role ||
-          user.user_metadata?.user_role ||
-          ""
-      ).toLowerCase();
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("full_name, role, status")
+          .eq("id", user.id)
+          .maybeSingle();
 
-      const owner =
-        role === "owner" ||
-        role === "admin" ||
-        role === "super_admin";
+        if (profileError) {
+          console.error("Unable to load recruiter profile:", profileError);
+        }
 
-      setUserEmail(email);
+        if (cancelled) {
+          return;
+        }
 
-      if (fullName) {
-        setUserName(fullName);
-      } else if (email) {
-        setUserName(email.split("@")[0]);
-      }
+        const profileRole = String(
+          profile?.role || "recruiter"
+        ).toLowerCase();
 
-      setIsOwner(owner);
+        const fullName =
+          profile?.full_name ||
+          user.user_metadata?.full_name ||
+          user.user_metadata?.name ||
+          "";
 
-      if (owner) {
-        setUserRole("Owner");
-      } else {
-        setUserRole("Recruiter");
+        const owner =
+          profileRole === "owner" ||
+          profileRole === "admin" ||
+          profileRole === "super_admin";
+
+        setUserEmail(email);
+
+        if (fullName) {
+          setUserName(fullName);
+        } else if (email) {
+          setUserName(email.split("@")[0]);
+        }
+
+        setIsOwner(owner);
+
+        if (profileRole === "owner") {
+          setUserRole("Owner");
+        } else if (
+          profileRole === "admin" ||
+          profileRole === "super_admin"
+        ) {
+          setUserRole("Admin");
+        } else {
+          setUserRole("Recruiter");
+        }
+      } catch (error) {
+        console.error("Load recruiter user error:", error);
       }
     }
 
-    loadUser();
+    void loadUser();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -202,20 +238,15 @@ export default function RecruiterLayout({
     setMenuOpen(false);
   }
 
-  if (isLoginPage) {
+  if (isPublicAuthPage) {
     return <>{children}</>;
   }
 
   return (
     <div className="min-h-screen bg-[#03040a] text-white">
 
-      {/* TOP HEADER */}
-
       <header className="fixed left-0 right-0 top-0 z-40 h-16 border-b border-white/10 bg-[#03040a]">
-
         <div className="flex h-full items-center justify-between px-4 sm:px-6">
-
-          {/* LEFT SIDE */}
 
           <div className="flex items-center gap-3">
 
@@ -237,7 +268,6 @@ export default function RecruiterLayout({
               </div>
 
               <div className="hidden sm:block">
-
                 <p className="text-sm font-semibold tracking-tight">
                   HireX
                 </p>
@@ -245,22 +275,16 @@ export default function RecruiterLayout({
                 <p className="text-[9px] font-medium uppercase tracking-[0.22em] text-white/30">
                   Recruiter ATS
                 </p>
-
               </div>
 
             </div>
-
           </div>
-
-          {/* ACCOUNT */}
 
           <div className="relative">
 
             <button
               type="button"
-              onClick={() =>
-                setAccountOpen(!accountOpen)
-              }
+              onClick={() => setAccountOpen(!accountOpen)}
               className="flex items-center gap-3 rounded-xl px-2 py-1.5 transition hover:bg-white/[0.05]"
             >
 
@@ -269,7 +293,6 @@ export default function RecruiterLayout({
               </div>
 
               <div className="hidden text-left sm:block">
-
                 <p className="max-w-[180px] truncate text-xs font-semibold text-white/85">
                   {userName}
                 </p>
@@ -277,7 +300,6 @@ export default function RecruiterLayout({
                 <p className="max-w-[180px] truncate text-[10px] text-white/30">
                   {userRole}
                 </p>
-
               </div>
 
               <UserCircle
@@ -289,13 +311,10 @@ export default function RecruiterLayout({
 
             {accountOpen && (
               <>
-
                 <button
                   type="button"
                   aria-label="Close account menu"
-                  onClick={() =>
-                    setAccountOpen(false)
-                  }
+                  onClick={() => setAccountOpen(false)}
                   className="fixed inset-0 z-40 cursor-default"
                 />
 
@@ -335,22 +354,16 @@ export default function RecruiterLayout({
                   </button>
 
                 </div>
-
               </>
             )}
 
           </div>
 
         </div>
-
       </header>
-
-      {/* SIDEBAR */}
 
       {menuOpen && (
         <div className="fixed inset-0 z-50">
-
-          {/* BACKDROP */}
 
           <button
             type="button"
@@ -359,11 +372,7 @@ export default function RecruiterLayout({
             className="absolute inset-0 bg-black/55"
           />
 
-          {/* SIDEBAR */}
-
           <aside className="relative flex h-full w-[300px] max-w-[88vw] flex-col border-r border-white/10 bg-[#05060d] shadow-2xl">
-
-            {/* SIDEBAR HEADER */}
 
             <div className="flex h-16 shrink-0 items-center justify-between border-b border-white/10 px-5">
 
@@ -376,7 +385,6 @@ export default function RecruiterLayout({
                 </div>
 
                 <div>
-
                   <p className="text-sm font-semibold">
                     HireX
                   </p>
@@ -384,7 +392,6 @@ export default function RecruiterLayout({
                   <p className="text-[9px] uppercase tracking-[0.22em] text-white/30">
                     Recruiter ATS
                   </p>
-
                 </div>
 
               </div>
@@ -400,11 +407,7 @@ export default function RecruiterLayout({
 
             </div>
 
-            {/* NAVIGATION */}
-
             <nav className="flex-1 overflow-y-auto px-3 py-5">
-
-              {/* WORKSPACE */}
 
               <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/25">
                 Workspace
@@ -413,7 +416,6 @@ export default function RecruiterLayout({
               <div className="space-y-1">
 
                 {mainNavigation.map((item) => {
-
                   const active = isActive(item.href);
 
                   return (
@@ -454,12 +456,9 @@ export default function RecruiterLayout({
 
                     </a>
                   );
-
                 })}
 
               </div>
-
-              {/* RECRUITER PERFORMANCE */}
 
               {!isOwner && (
                 <div className="mt-7">
@@ -501,8 +500,6 @@ export default function RecruiterLayout({
                 </div>
               )}
 
-              {/* OWNER MANAGEMENT */}
-
               {isOwner && (
                 <div className="mt-7">
 
@@ -513,7 +510,6 @@ export default function RecruiterLayout({
                   <div className="space-y-1">
 
                     {ownerNavigation.map((item) => {
-
                       const active = isActive(item.href);
 
                       return (
@@ -554,7 +550,6 @@ export default function RecruiterLayout({
 
                         </a>
                       );
-
                     })}
 
                   </div>
@@ -563,8 +558,6 @@ export default function RecruiterLayout({
               )}
 
             </nav>
-
-            {/* SIDEBAR ACCOUNT */}
 
             <div className="shrink-0 border-t border-white/10 p-4">
 
@@ -611,8 +604,6 @@ export default function RecruiterLayout({
 
         </div>
       )}
-
-      {/* MAIN CONTENT */}
 
       <main className="min-h-screen pt-16">
         {children}

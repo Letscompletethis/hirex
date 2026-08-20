@@ -43,10 +43,12 @@ export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
   const isRecruiterRoute = pathname.startsWith("/recruiter");
-  const isLoginPage = pathname === "/recruiter/login";
+  const isPublicAuthPage =
+    pathname === "/recruiter/login" ||
+    pathname === "/recruiter/reset-password";
 
   // Protect recruiter pages
-  if (isRecruiterRoute && !isLoginPage && !user) {
+  if (isRecruiterRoute && !isPublicAuthPage && !user) {
     const loginUrl = request.nextUrl.clone();
 
     loginUrl.pathname = "/recruiter/login";
@@ -56,7 +58,7 @@ export async function proxy(request: NextRequest) {
   }
 
   // Already logged in → don't show login page
-  if (isLoginPage && user) {
+  if (pathname === "/recruiter/login" && user) {
     return NextResponse.redirect(
       new URL("/recruiter", request.url)
     );

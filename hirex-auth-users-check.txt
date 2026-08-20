@@ -1,0 +1,1388 @@
+"use client";
+
+import { FormEvent, ReactNode, useEffect, useState } from "react";
+import {
+UserPlus,
+Users,
+ShieldCheck,
+UserRound,
+UserX,
+X,
+Loader2,
+} from "lucide-react";
+import { supabase } from "../../../lib/supabase";
+
+type UserRole = "owner" | "admin" | "recruiter";
+
+type HireXUser = {
+id: string;
+email: string;
+full_name: string | null;
+role: UserRole;
+status: string;
+created_at: string;
+};
+
+export default function UsersPage() {
+const [users, setUsers] = useState<HireXUser[]>([]);
+const [loading, setLoading] = useState(true);
+const [saving, setSaving] = useState(false);
+const [updatingUserId, setUpdatingUserId] = useState("");
+const [showAddUser, setShowAddUser] = useState(false);
+const [currentUserId, setCurrentUserId] = useState("");
+const [currentUserRole, setCurrentUserRole] = useState<UserRole | "">("");
+
+const [fullName, setFullName] = useState("");
+const [email, setEmail] = useState("");
+const [role, setRole] = useState<UserRole>("recruiter");
+
+const [message, setMessage] = useState("");
+const [error, setError] = useState("");
+
+async function loadUsers() {
+setLoading(true);
+setError("");
+
+try {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Your session has expired.");
+  }
+
+  setCurrentUserId(user.id);
+
+  const { data: currentProfile, error: currentProfileError } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  if (currentProfileError) {
+    throw currentProfileError;
+  }
+
+  setCurrentUserRole((currentProfile?.role || "") as UserRole | "");
+
+  const { data, error: usersError } = await supabase
+    .from("profiles")
+    .select("id,email,full_name,role,status,created_at")
+    .order("created_at", { ascending: false });
+
+  if (usersError) {
+    throw usersError;
+  }
+
+  setUsers((data || []) as HireXUser[]);
+} catch (err) {
+  console.error("Load users error:", err);
+
+  setError(
+    err instanceof Error ? err.message : "Unable to load users."
+  );
+} finally {
+  setLoading(false);
+}
+
+}
+
+useEffect(() => {
+void Promise.resolve().then(loadUsers);
+}, []);
+
+function resetForm() {
+setFullName("");
+setEmail("");
+setRole("recruiter");
+setMessage("");
+setError("");
+}
+
+function closeModal() {
+if (saving) return;
+
+setShowAddUser(false);
+resetForm();
+
+}
+
+async function handleAddUser(event: FormEvent<HTMLFormElement>) {
+event.preventDefault();
+
+setMessage("");
+setError("");
+
+if (!fullName.trim()) {
+  setError("Please enter the user's full name.");
+  return;
+}
+
+if (!email.trim()) {
+  setError("Please enter the user's email.");
+  return;
+}
+
+setSaving(true);
+
+try {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error(
+      "Your session has expired. Please log in again."
+    );
+  }
+  const response = await fetch("/api/recruiter/users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({
+      fullName: fullName.trim(),
+      email: email.trim().toLowerCase(),
+      role,
+    }),
+  });
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      result?.error || "Unable to create the user."
+    );
+  }
+
+  setMessage(
+    result?.message || "User created successfully."
+  );
+
+  setFullName("");
+  setEmail("");
+  setRole("recruiter");
+
+  await loadUsers();
+
+  setTimeout(() => {
+    setShowAddUser(false);
+    setMessage("");
+  }, 1500);
+} catch (err) {
+  console.error("Add user error:", err);
+
+  setError(
+    err instanceof Error
+      ? err.message
+      : "Unable to create the user."
+  );
+} finally {
+  setSaving(false);
+}
+}
+
+async function updateUserStatus(user: HireXUser, status: "active" | "inactive") {
+if (user.status === status || updatingUserId) return;
+
+const action = status === "active" ? "activate" : "deactivate";
+
+if (!window.confirm(`Are you sure you want to ${action} ${user.full_name || user.email}?`)) {
+  return;
+}
+
+setError("");
+setMessage("");
+setUpdatingUserId(user.id);
+
+try {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error("Your session has expired. Please log in again.");
+  }
+
+  const response = await fetch("/api/recruiter/users", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ userId: user.id, status }),
+  });
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(result?.error || "Unable to update the user status.");
+  }
+
+  setMessage(result?.message || "User status updated successfully.");
+  await loadUsers();
+} catch (err) {
+  console.error("Update user status error:", err);
+  setError(err instanceof Error ? err.message : "Unable to update the user status.");
+} finally {
+  setUpdatingUserId("");
+}
+}
+
+const totalUsers = users.length;
+
+const activeUsers = users.filter(
+(user) => user.status === "active"
+).length;
+
+const ownerCount = users.filter(
+(user) => user.role === "owner"
+).length;
+
+const adminCount = users.filter(
+(user) => user.role === "admin"
+).length;
+
+const recruiterCount = users.filter(
+(user) => user.role === "recruiter"
+).length;
+
+const isOwner = currentUserRole === "owner";
+const canCreateUsers = isOwner || currentUserRole === "admin";
+
+return ( <div className="min-h-screen bg-[#03040a] px-4 py-8 text-white sm:px-6 lg:px-8"> <div className="mx-auto max-w-7xl">
+
+    <div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <p className="mb-2 text-xs font-medium uppercase tracking-[0.2em] text-purple-300/60">
+          HireX ATS
+        </p>
+
+        <h1 className="text-3xl font-semibold tracking-tight">
+          Users & Accounts
+        </h1>
+
+        <p className="mt-2 max-w-2xl text-sm text-white/40">
+          Manage recruiter, admin, and owner accounts for your HireX ATS.
+        </p>
+      </div>
+
+      {canCreateUsers && <button
+        type="button"
+        onClick={() => {
+          resetForm();
+          setShowAddUser(true);
+        }}
+        className="flex items-center justify-center gap-2 rounded-xl bg-purple-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-purple-400"
+      >
+        <UserPlus size={17} />
+        Add User
+      </button>}
+    </div>
+
+    {error && !showAddUser && (
+      <div className="mb-6 rounded-xl border border-red-400/20 bg-red-400/[0.06] px-4 py-3 text-sm text-red-200">
+        {error}
+      </div>
+    )}
+
+    {message && !showAddUser && (
+      <div className="mb-6 rounded-xl border border-green-400/20 bg-green-400/[0.06] px-4 py-3 text-sm text-green-200">
+        {message}
+      </div>
+    )}
+
+    <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-5">
+      <StatCard
+        label="Total Users"
+        value={totalUsers}
+        icon={<Users size={18} />}
+      />
+
+      <StatCard
+        label="Active Users"
+        value={activeUsers}
+        icon={<ShieldCheck size={18} />}
+      />
+
+      <StatCard
+        label="Recruiters"
+        value={recruiterCount}
+        icon={<UserRound size={18} />}
+      />
+
+      <StatCard
+        label="Admins"
+        value={adminCount}
+        icon={<ShieldCheck size={18} />}
+      />
+
+      <StatCard
+        label="Owners"
+        value={ownerCount}
+        icon={<UserX size={18} />}
+      />
+    </div>
+
+    <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+      <div className="border-b border-white/10 px-5 py-4">
+        <h2 className="text-sm font-semibold">
+          HireX Accounts
+        </h2>
+
+        <p className="mt-1 text-xs text-white/35">
+          Users who have access to the internal recruiter workspace.
+        </p>
+      </div>
+
+      {loading ? (
+        <div className="flex min-h-[220px] items-center justify-center">
+          <Loader2
+            size={24}
+            className="animate-spin text-purple-300"
+          />
+        </div>
+      ) : users.length === 0 ? (
+        <div className="flex min-h-[220px] flex-col items-center justify-center px-6 text-center">
+          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/[0.04]">
+            <Users size={22} className="text-white/40" />
+          </div>
+
+          <h3 className="text-sm font-medium">
+            No users found
+          </h3>
+
+          <p className="mt-1 max-w-md text-xs text-white/35">
+            Add your first recruiter or admin account to begin.
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[780px]">
+            <thead>
+              <tr className="border-b border-white/10 text-left text-xs text-white/35">
+                <th className="px-5 py-4 font-medium">
+                  User
+                </th>
+
+                <th className="px-5 py-4 font-medium">
+                  Role
+                </th>
+
+                <th className="px-5 py-4 font-medium">
+                  Status
+                </th>
+
+                <th className="px-5 py-4 font-medium">
+                  Created
+                </th>
+                {isOwner && <th className="px-5 py-4 font-medium">
+                  Account Status
+                </th>}
+              </tr>
+            </thead>
+
+            <tbody>
+              {users.map((user) => (
+                <tr
+                  key={user.id}
+                  className="border-b border-white/[0.06] last:border-0"
+                >
+                  <td className="px-5 py-4">
+                    <div>
+                      <p className="text-sm font-medium text-white">
+                        {user.full_name || "Unnamed User"}
+                      </p>
+
+                      <p className="mt-1 text-xs text-white/35">
+                        {user.email}
+                      </p>
+                    </div>
+                  </td>
+
+                  <td className="px-5 py-4">
+                    <RoleBadge role={user.role} />
+                  </td>
+
+                  <td className="px-5 py-4">
+                    <span
+                      className={`rounded-full border px-3 py-1 text-[11px] font-medium capitalize ${
+                        user.status === "active"
+                          ? "border-green-400/20 bg-green-400/[0.08] text-green-200"
+                          : "border-white/10 bg-white/[0.04] text-white/45"
+                      }`}
+                    >
+                      {user.status || "pending"}
+                    </span>
+                  </td>
+
+                  <td className="px-5 py-4 text-xs text-white/40">
+                    {new Date(
+                      user.created_at
+                    ).toLocaleDateString()}
+                  </td>
+                  {isOwner && <td className="px-5 py-4">
+                    <button
+                      type="button"
+                      disabled={
+                        user.id === currentUserId ||
+                        updatingUserId === user.id
+                      }
+                      onClick={() =>
+                        updateUserStatus(
+                          user,
+                          user.status === "active" ? "inactive" : "active",
+                        )
+                      }
+                      className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-white/70 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {updatingUserId === user.id
+                        ? "Saving..."
+                        : user.id === currentUserId
+                          ? "Your account"
+                          : user.status === "active"
+                            ? "Deactivate"
+                            : "Activate"}
+                    </button>
+                  </td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+
+    {showAddUser && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+        <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#0a0b12] shadow-2xl">
+          <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+            <div>
+              <h2 className="text-base font-semibold">
+                Add HireX User
+              </h2>
+
+              <p className="mt-1 text-xs text-white/35">
+                Create a new internal ATS account.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={closeModal}
+              disabled={saving}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-white/40 transition hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <form
+            onSubmit={handleAddUser}
+            className="space-y-5 p-5"
+          >
+            {error && (
+              <div className="rounded-xl border border-red-400/20 bg-red-400/[0.06] px-4 py-3 text-sm text-red-200">
+                {error}
+              </div>
+            )}
+
+            {message && (
+              <div className="rounded-xl border border-green-400/20 bg-green-400/[0.06] px-4 py-3 text-sm text-green-200">
+                {message}
+              </div>
+            )}
+
+            <div>
+              <label className="mb-2 block text-xs font-medium text-white/55">
+                Full Name
+              </label>
+
+              <input
+                type="text"
+                value={fullName}
+                onChange={(event) =>
+                  setFullName(event.target.value)
+                }
+                placeholder="John Smith"
+                disabled={saving}
+                className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/20 focus:border-purple-400/40"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-xs font-medium text-white/55">
+                Email
+              </label>
+
+              <input
+                type="email"
+                value={email}
+                onChange={(event) =>
+                  setEmail(event.target.value)
+                }
+                placeholder="john@hirex.com"
+                disabled={saving}
+                className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/20 focus:border-purple-400/40"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-xs font-medium text-white/55">
+                Role
+              </label>
+
+              <select
+                value={role}
+                onChange={(event) =>
+                  setRole(
+                    event.target.value as UserRole
+                  )
+                }
+                disabled={saving}
+                className="w-full rounded-xl border border-white/10 bg-[#0d0e16] px-4 py-3 text-sm text-white outline-none focus:border-purple-400/40"
+              >
+                <option value="recruiter">
+                  Recruiter
+                </option>
+
+                <option value="admin">
+                  Admin
+                </option>
+
+                <option value="owner">
+                  Owner
+                </option>
+              </select>
+            </div>
+
+            <div className="rounded-xl border border-purple-400/10 bg-purple-400/[0.04] px-4 py-3">
+              <p className="text-xs font-medium text-purple-200/80">
+                Account invitation
+              </p>
+
+              <p className="mt-1 text-xs leading-5 text-white/35">
+                The user will receive an invitation email
+                to finish setting up their HireX account.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={closeModal}
+                disabled={saving}
+                className="flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-medium text-white/70 transition hover:bg-white/[0.07] disabled:opacity-40"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-purple-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-purple-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {saving && (
+                  <Loader2
+                    size={17}
+                    className="animate-spin"
+                  />
+                )}
+
+                {saving
+                  ? "Creating User..."
+                  : "Create User"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
+  </div>
+</div>
+
+);
+}
+
+function StatCard({
+label,
+value,
+icon,
+}: {
+label: string;
+value: number;
+icon: ReactNode;
+}) {
+return ( <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4"> <div className="mb-4 flex h-9 w-9 items-center justify-center rounded-xl bg-purple-400/10 text-purple-200">
+{icon} </div>
+
+  <p className="text-2xl font-semibold tracking-tight">
+    {value}
+  </p>
+
+  <p className="mt-1 text-xs text-white/35">
+    {label}
+  </p>
+</div>
+
+);
+}
+
+function RoleBadge({
+role,
+}: {
+role: UserRole;
+}) {
+const styles =
+role === "owner"
+? "border-purple-400/20 bg-purple-400/[0.08] text-purple-200"
+: role === "admin"
+? "border-blue-400/20 bg-blue-400/[0.08] text-blue-200"
+: "border-white/10 bg-white/[0.04] text-white/55";
+
+return (
+<span
+className={`rounded-full border px-3 py-1 text-[11px] font-medium capitalize ${styles}`}
+>
+{role} </span>
+);
+}
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !serviceRoleKey) {
+  throw new Error("Missing Supabase server environment variables.");
+}
+
+const adminSupabase = createClient(supabaseUrl, serviceRoleKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+  },
+});
+
+const ALLOWED_ROLES = ["owner", "admin", "recruiter"] as const;
+const MANAGED_STATUSES = ["active", "inactive"] as const;
+
+type UserRole = (typeof ALLOWED_ROLES)[number];
+type ManagedStatus = (typeof MANAGED_STATUSES)[number];
+
+function isUserRole(role: string): role is UserRole {
+  return ALLOWED_ROLES.includes(role as UserRole);
+}
+
+function isManagedStatus(status: string): status is ManagedStatus {
+  return MANAGED_STATUSES.includes(status as ManagedStatus);
+}
+
+async function authUserExists(email: string) {
+  const perPage = 1000;
+
+  for (let page = 1; ; page += 1) {
+    const { data, error } = await adminSupabase.auth.admin.listUsers({
+      page,
+      perPage,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    if (data.users.some((user) => user.email?.toLowerCase() === email)) {
+      return true;
+    }
+
+    if (data.users.length < perPage) {
+      return false;
+    }
+  }
+}
+
+export async function POST(request: NextRequest) {
+  const authorization = request.headers.get("authorization");
+
+  if (!authorization?.startsWith("Bearer ")) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  const accessToken = authorization.slice("Bearer ".length).trim();
+
+  if (!accessToken) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  try {
+    const { data: authData, error: authError } = await adminSupabase.auth.getUser(
+      accessToken,
+    );
+
+    if (authError || !authData.user) {
+      return NextResponse.json(
+        { error: "Your session has expired." },
+        { status: 401 },
+      );
+    }
+
+    const { data: currentProfile, error: profileError } = await adminSupabase
+      .from("profiles")
+      .select("role, status")
+      .eq("id", authData.user.id)
+      .single();
+
+    if (profileError || !currentProfile) {
+      return NextResponse.json(
+        { error: "Your HireX profile could not be found." },
+        { status: 403 },
+      );
+    }
+
+    if (
+      currentProfile.status !== "active" ||
+      (currentProfile.role !== "owner" && currentProfile.role !== "admin")
+    ) {
+      return NextResponse.json(
+        { error: "You do not have permission to create users." },
+        { status: 403 },
+      );
+    }
+
+    let body: unknown;
+
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+    }
+
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+    }
+
+    const { fullName: rawFullName, email: rawEmail, role: rawRole } = body as {
+      fullName?: unknown;
+      email?: unknown;
+      role?: unknown;
+    };
+    const fullName = typeof rawFullName === "string" ? rawFullName.trim() : "";
+    const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
+    const role = typeof rawRole === "string" ? rawRole.trim().toLowerCase() : "";
+
+    if (!fullName) {
+      return NextResponse.json(
+        { error: "A full name is required." },
+        { status: 400 },
+      );
+    }
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json(
+        { error: "A valid email address is required." },
+        { status: 400 },
+      );
+    }
+
+    if (!isUserRole(role)) {
+      return NextResponse.json(
+        { error: "Role must be owner, admin, or recruiter." },
+        { status: 400 },
+      );
+    }
+
+    if (role === "owner" && currentProfile.role !== "owner") {
+      return NextResponse.json(
+        { error: "Only an owner can create another owner." },
+        { status: 403 },
+      );
+    }
+
+    if (await authUserExists(email)) {
+      return NextResponse.json(
+        { error: "A user with this email already exists." },
+        { status: 409 },
+      );
+    }
+
+    const invitationUrl = new URL("/recruiter/reset-password", request.url);
+    const { data: createdAuth, error: createAuthError } =
+      await adminSupabase.auth.admin.inviteUserByEmail(email, {
+        redirectTo: invitationUrl.toString(),
+        data: {
+          full_name: fullName,
+          role,
+        },
+      });
+
+    if (createAuthError || !createdAuth.user) {
+      return NextResponse.json(
+        { error: createAuthError?.message ?? "Unable to create the auth user." },
+        { status: 400 },
+      );
+    }
+
+    const { error: upsertProfileError } = await adminSupabase
+      .from("profiles")
+      .upsert({
+        id: createdAuth.user.id,
+        email,
+        full_name: fullName,
+        role,
+        status: "active",
+        must_change_password: true,
+      });
+
+    if (upsertProfileError) {
+      const { error: rollbackError } = await adminSupabase.auth.admin.deleteUser(
+        createdAuth.user.id,
+      );
+
+      console.error("Profile creation failed; auth user rollback result:", rollbackError);
+
+      return NextResponse.json(
+        {
+          error: "Unable to create the user profile. The auth user was rolled back.",
+        },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        message: "User created successfully.",
+        user: {
+          id: createdAuth.user.id,
+          email,
+          fullName,
+          role,
+        },
+      },
+      { status: 201 },
+    );
+  } catch (error) {
+    console.error("Create recruiter user error:", error);
+
+    return NextResponse.json(
+      { error: "Unable to create the user." },
+      { status: 500 },
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  const authorization = request.headers.get("authorization");
+
+  if (!authorization?.startsWith("Bearer ")) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  const accessToken = authorization.slice("Bearer ".length).trim();
+
+  if (!accessToken) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  try {
+    const { data: authData, error: authError } = await adminSupabase.auth.getUser(
+      accessToken,
+    );
+
+    if (authError || !authData.user) {
+      return NextResponse.json(
+        { error: "Your session has expired." },
+        { status: 401 },
+      );
+    }
+
+    const { data: currentProfile, error: currentProfileError } =
+      await adminSupabase
+        .from("profiles")
+        .select("role, status")
+        .eq("id", authData.user.id)
+        .single();
+
+    if (
+      currentProfileError ||
+      !currentProfile ||
+      currentProfile.status !== "active" ||
+      currentProfile.role !== "owner"
+    ) {
+      return NextResponse.json(
+        { error: "Only an active owner can change user status." },
+        { status: 403 },
+      );
+    }
+
+    let body: unknown;
+
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+    }
+
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+    }
+
+    const { userId: rawUserId, status: rawStatus } = body as {
+      userId?: unknown;
+      status?: unknown;
+    };
+    const userId = typeof rawUserId === "string" ? rawUserId.trim() : "";
+    const status = typeof rawStatus === "string" ? rawStatus.trim().toLowerCase() : "";
+
+    if (!userId) {
+      return NextResponse.json({ error: "A user is required." }, { status: 400 });
+    }
+
+    if (!isManagedStatus(status)) {
+      return NextResponse.json(
+        { error: "Status must be active or inactive." },
+        { status: 400 },
+      );
+    }
+
+    if (userId === authData.user.id) {
+      return NextResponse.json(
+        { error: "You cannot change your own account status." },
+        { status: 400 },
+      );
+    }
+
+    const { data: targetProfile, error: targetProfileError } = await adminSupabase
+      .from("profiles")
+      .select("id, role, status")
+      .eq("id", userId)
+      .single();
+
+    if (targetProfileError || !targetProfile) {
+      return NextResponse.json({ error: "User not found." }, { status: 404 });
+    }
+
+    if (targetProfile.status === status) {
+      return NextResponse.json({ message: "User status is already up to date." });
+    }
+
+    if (targetProfile.role === "owner" && status === "inactive") {
+      const { count, error: ownerCountError } = await adminSupabase
+        .from("profiles")
+        .select("id", { count: "exact", head: true })
+        .eq("role", "owner")
+        .eq("status", "active");
+
+      if (ownerCountError) {
+        throw ownerCountError;
+      }
+
+      if ((count ?? 0) <= 1) {
+        return NextResponse.json(
+          { error: "HireX must retain at least one active owner." },
+          { status: 400 },
+        );
+      }
+    }
+
+    const { error: profileUpdateError } = await adminSupabase
+      .from("profiles")
+      .update({ status })
+      .eq("id", userId);
+
+    if (profileUpdateError) {
+      throw profileUpdateError;
+    }
+
+    const { error: authUpdateError } = await adminSupabase.auth.admin.updateUserById(
+      userId,
+      { ban_duration: status === "inactive" ? "876000h" : "none" },
+    );
+
+    if (authUpdateError) {
+      const { error: rollbackError } = await adminSupabase
+        .from("profiles")
+        .update({ status: targetProfile.status })
+        .eq("id", userId);
+
+      console.error("Auth status update failed; profile rollback result:", rollbackError);
+      throw authUpdateError;
+    }
+
+    return NextResponse.json({
+      message: `User ${status === "active" ? "activated" : "deactivated"} successfully.`,
+      user: { id: userId, status },
+    });
+  } catch (error) {
+    console.error("Update recruiter user status error:", error);
+
+    return NextResponse.json(
+      { error: "Unable to update the user status." },
+      { status: 500 },
+    );
+  }
+}
+"use client";
+
+import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+import { KeyRound, Loader2 } from "lucide-react";
+import { supabase } from "../../../lib/supabase";
+
+export default function ResetPasswordPage() {
+  const router = useRouter();
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+
+    if (password.length < 8) {
+      setError("Your password must be at least 8 characters long.");
+      return;
+    }
+
+    if (password !== confirmation) {
+      setError("Your passwords do not match.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const { error: updateError } = await supabase.auth.updateUser({ password });
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      router.replace("/recruiter");
+      router.refresh();
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "Unable to set your password. Please request a new invitation.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#03040a] px-5 py-10 text-white">
+      <section className="w-full max-w-md rounded-3xl border border-white/10 bg-white/[0.025] p-6 shadow-2xl sm:p-8">
+        <div className="mb-7 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-purple-400/20 bg-purple-400/10 text-purple-200">
+            <KeyRound size={22} />
+          </div>
+          <p className="mt-6 text-xs font-semibold uppercase tracking-[0.28em] text-purple-200/70">
+            HireX ATS
+          </p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight">Set your password</h1>
+          <p className="mt-2 text-sm text-white/40">
+            Choose a password to activate your HireX account.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          {error && (
+            <p className="mb-5 rounded-xl border border-red-400/20 bg-red-400/[0.05] px-4 py-3 text-sm text-red-300">
+              {error}
+            </p>
+          )}
+
+          <label htmlFor="password" className="mb-2 block text-xs font-medium text-white/55">
+            New password
+          </label>
+          <input
+            id="password"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="new-password"
+            required
+            minLength={8}
+            className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none transition focus:border-purple-400/40"
+          />
+
+          <label htmlFor="confirmation" className="mb-2 mt-5 block text-xs font-medium text-white/55">
+            Confirm new password
+          </label>
+          <input
+            id="confirmation"
+            type="password"
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            autoComplete="new-password"
+            required
+            minLength={8}
+            className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none transition focus:border-purple-400/40"
+          />
+
+          <button
+            type="submit"
+            disabled={saving}
+            className="mt-7 flex w-full items-center justify-center gap-2 rounded-xl bg-purple-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-purple-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving && <Loader2 size={17} className="animate-spin" />}
+            {saving ? "Activating account..." : "Activate account"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+"use client";
+
+import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Loader2, LockKeyhole, Mail } from "lucide-react";
+import { supabase } from "../../../lib/supabase";
+
+export default function RecruiterLoginPage() {
+const router = useRouter();
+
+const [email, setEmail] = useState("");
+const [password, setPassword] = useState("");
+const [error, setError] = useState("");
+const [loading, setLoading] = useState(false);
+
+async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+event.preventDefault();
+
+
+setError("");
+setLoading(true);
+
+try {
+  const { error: loginError } =
+    await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+  if (loginError) {
+    setError(loginError.message);
+    return;
+  }
+
+  router.push("/recruiter");
+  router.refresh();
+} catch (error) {
+  console.error("Recruiter login error:", error);
+  setError("Something went wrong. Please try again.");
+} finally {
+  setLoading(false);
+}
+
+
+}
+
+return ( <main className="min-h-screen bg-[#03040a] text-white"> <div className="flex min-h-screen items-center justify-center px-5 py-10"> <div className="w-full max-w-md">
+
+
+      <div className="mb-8 text-center">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-purple-400/20 bg-purple-400/10">
+          <span className="text-lg font-bold text-purple-200">
+            HX
+          </span>
+        </div>
+
+        <p className="mt-6 text-xs font-semibold uppercase tracking-[0.28em] text-purple-200/70">
+          HireX ATS
+        </p>
+
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+          Recruiter Login
+        </h1>
+
+        <p className="mt-2 text-sm text-white/40">
+          Sign in to access your recruiting dashboard.
+        </p>
+      </div>
+
+      <form
+        onSubmit={handleSubmit}
+        className="rounded-3xl border border-white/10 bg-white/[0.025] p-6 shadow-2xl sm:p-8"
+      >
+        {error && (
+          <div className="mb-5 rounded-xl border border-red-400/20 bg-red-400/[0.05] px-4 py-3">
+            <p className="text-sm text-red-300">
+              {error}
+            </p>
+          </div>
+        )}
+
+        <div>
+          <label
+            htmlFor="email"
+            className="mb-2 block text-xs font-medium text-white/55"
+          >
+            Email
+          </label>
+
+          <div className="relative">
+            <Mail
+              size={17}
+              className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-white/25"
+            />
+
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(event) =>
+                setEmail(event.target.value)
+              }
+              placeholder="recruiter@hirex.com"
+              autoComplete="email"
+              required
+              className="w-full rounded-xl border border-white/10 bg-black/20 py-3 pl-11 pr-4 text-sm text-white outline-none transition placeholder:text-white/20 focus:border-purple-400/40 focus:bg-white/[0.04]"
+            />
+          </div>
+        </div>
+
+        <div className="mt-5">
+          <label
+            htmlFor="password"
+            className="mb-2 block text-xs font-medium text-white/55"
+          >
+            Password
+          </label>
+
+          <div className="relative">
+            <LockKeyhole
+              size={17}
+              className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-white/25"
+            />
+
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(event) =>
+                setPassword(event.target.value)
+              }
+              placeholder="Enter your password"
+              autoComplete="current-password"
+              required
+              className="w-full rounded-xl border border-white/10 bg-black/20 py-3 pl-11 pr-4 text-sm text-white outline-none transition placeholder:text-white/20 focus:border-purple-400/40 focus:bg-white/[0.04]"
+            />
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="mt-7 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-black transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading ? (
+            <>
+              <Loader2
+                size={17}
+                className="animate-spin"
+              />
+              Signing in...
+            </>
+          ) : (
+            "Sign In"
+          )}
+        </button>
+
+        <p className="mt-6 text-center text-xs text-white/25">
+          Authorized HireX recruiters only.
+        </p>
+      </form>
+
+      <div className="mt-6 text-center">
+        <a
+          href="/"
+          className="text-xs text-white/35 transition hover:text-white/70"
+        >
+          ← Back to HireX
+        </a>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+
+);
+}
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
+
+export async function proxy(request: NextRequest) {
+  let response = NextResponse.next({
+    request: {
+      headers: request.headers,
+    },
+  });
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => {
+            request.cookies.set(name, value);
+          });
+
+          response = NextResponse.next({
+            request: {
+              headers: request.headers,
+            },
+          });
+
+          cookiesToSet.forEach(({ name, value, options }) => {
+            response.cookies.set(name, value, options);
+          });
+        },
+      },
+    }
+  );
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const pathname = request.nextUrl.pathname;
+
+  const isRecruiterRoute = pathname.startsWith("/recruiter");
+  const isPublicAuthPage =
+    pathname === "/recruiter/login" ||
+    pathname === "/recruiter/reset-password";
+
+  // Protect recruiter pages
+  if (isRecruiterRoute && !isPublicAuthPage && !user) {
+    const loginUrl = request.nextUrl.clone();
+
+    loginUrl.pathname = "/recruiter/login";
+    loginUrl.searchParams.set("redirect", pathname);
+
+    return NextResponse.redirect(loginUrl);
+  }
+
+  // Already logged in ? don't show login page
+  if (pathname === "/recruiter/login" && user) {
+    return NextResponse.redirect(
+      new URL("/recruiter", request.url)
+    );
+  }
+
+  return response;
+}
+
+export const config = {
+  matcher: ["/recruiter/:path*"],
+};

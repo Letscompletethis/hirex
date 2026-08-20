@@ -49,13 +49,13 @@ export default function SubmissionsPage() {
                 key={application.id}
                 className="grid grid-cols-4 border-b border-white/[0.06] px-5 py-4 text-sm"
               >
-                <span>{application.candidate_id || "—"}</span>
-                <span>{application.job_id || "—"}</span>
-                <span>{application.status || "—"}</span>
+                <span>{application.candidate_id || "-"}</span>
+                <span>{application.job_id || "-"}</span>
+                <span>{application.status || "-"}</span>
                 <span>
                   {application.applied_at
                     ? new Date(application.applied_at).toLocaleDateString()
-                    : "—"}
+                    : "-"}
                 </span>
               </div>
             ))
