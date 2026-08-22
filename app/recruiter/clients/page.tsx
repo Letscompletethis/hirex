@@ -92,27 +92,24 @@ function normalizeJobStatus(status: string | null) {
 }
 
 function createClientId(existingClients: Client[]) {
-  const numbers = existingClients
-    .map((client) => {
-      const match =
-        client.client_id?.match(
-          /HX-CLIENT-(\d+)/
-        );
+  const existingClientIds = new Set(
+    existingClients.map((client) => client.client_id)
+  );
 
-      return match
-        ? Number(match[1])
-        : 0;
-    })
-    .filter(Boolean);
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const randomNumber = crypto.getRandomValues(
+      new Uint32Array(1)
+    )[0] % 1000;
+    const clientId = `HX-CLIENT-${String(
+      randomNumber
+    ).padStart(3, "0")}`;
 
-  const nextNumber =
-    numbers.length > 0
-      ? Math.max(...numbers) + 1
-      : 1;
+    if (!existingClientIds.has(clientId)) {
+      return clientId;
+    }
+  }
 
-  return `HX-CLIENT-${String(
-    nextNumber
-  ).padStart(3, "0")}`;
+  throw new Error("Unable to allocate a client number.");
 }
 
 export default function ClientsPage() {

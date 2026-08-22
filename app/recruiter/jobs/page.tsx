@@ -29,6 +29,7 @@ import {
   BadgeCheck,
 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
+import { allocateJobCandidateNumber } from "../../../lib/job-candidate-number";
 
 type Job = {
   id: string;
@@ -65,7 +66,17 @@ type Application = {
   candidate_id?: string | null;
   job_id?: string | null;
   status?: string | null;
+  recruiter_id?: string | null;
+  job_candidate_number?: number | null;
   created_at?: string | null;
+};
+
+type Recruiter = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  role: string;
+  status: string;
 };
 
 const SUBMISSION_STATUSES = [
@@ -98,6 +109,20 @@ function getCandidateName(candidate: Candidate) {
 
 function normalizeStatus(status: string | null | undefined) {
   return (status || "new").toLowerCase().trim();
+}
+
+function normalizeJobStatus(status: string | null | undefined) {
+  const value = normalizeStatus(status);
+
+  if (["published", "open", "active"].includes(value)) {
+    return "published";
+  }
+
+  if (["paused", "hold", "on hold"].includes(value)) {
+    return "paused";
+  }
+
+  return value;
 }
 
 function applicationMatchesCandidate(
@@ -147,12 +172,15 @@ function RecruiterJobsContent() {
   const selectedJobId = searchParams.get("job");
   const selectedCandidateId =
     searchParams.get("candidate");
+  const requestedStatus = searchParams.get("status");
 
   const [jobs, setJobs] = useState<Job[]>([]);
   const [candidates, setCandidates] =
     useState<Candidate[]>([]);
   const [applications, setApplications] =
     useState<Application[]>([]);
+  const [recruiters, setRecruiters] =
+    useState<Recruiter[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [candidateLoading, setCandidateLoading] =
@@ -172,6 +200,12 @@ function RecruiterJobsContent() {
 
   const [updatingCandidateStatus, setUpdatingCandidateStatus] =
     useState(false);
+  const [assigningRecruiter, setAssigningRecruiter] =
+    useState(false);
+  const [selectedRecruiterId, setSelectedRecruiterId] =
+    useState("");
+  const [jobRecruiterSelections, setJobRecruiterSelections] =
+    useState<Record<string, string>>({});
 
   /*
    * =========================================================
@@ -224,6 +258,7 @@ function RecruiterJobsContent() {
       const [
         candidateRequest,
         applicationRequest,
+        recruiterRequest,
       ] = await Promise.all([
         supabase
           .from("candidates")
@@ -232,6 +267,13 @@ function RecruiterJobsContent() {
         supabase
           .from("applications")
           .select("*"),
+
+        supabase
+          .from("profiles")
+          .select("id,full_name,email,role,status")
+          .in("role", ["owner", "admin", "recruiter"])
+          .eq("status", "active")
+          .order("full_name", { ascending: true }),
       ]);
 
       if (candidateRequest.error) {
@@ -255,6 +297,12 @@ function RecruiterJobsContent() {
         (applicationRequest.data ||
           []) as Application[]
       );
+
+      if (!recruiterRequest.error) {
+        setRecruiters(
+          (recruiterRequest.data || []) as Recruiter[]
+        );
+      }
     } catch (err) {
       console.error(
         "Candidate/application error:",
@@ -272,8 +320,10 @@ function RecruiterJobsContent() {
   }
 
   useEffect(() => {
-    loadJobs();
-    loadCandidateData();
+    void Promise.resolve().then(() => {
+      loadJobs();
+      loadCandidateData();
+    });
   }, []);
 
   /*
@@ -291,6 +341,121 @@ function RecruiterJobsContent() {
       ) || null
     );
   }, [jobs, selectedJobId]);
+
+  const selectedJobRecruiterIds = useMemo(() => {
+    if (!selectedJob) return [];
+
+    return Array.from(
+      new Set(
+        applications
+          .filter((application) =>
+            applicationMatchesJob(application, selectedJob)
+          )
+          .map((application) => application.recruiter_id)
+          .filter(Boolean)
+      )
+    ) as string[];
+  }, [applications, selectedJob]);
+
+  async function assignRecruiterToJob() {
+    const recruiterId =
+      selectedRecruiterId || selectedJobRecruiterIds[0] || "";
+
+    if (!selectedJob || !recruiterId) return;
+
+    const applicationIds = applications
+      .filter((application) =>
+        applicationMatchesJob(application, selectedJob)
+      )
+      .map((application) => application.id)
+      .filter(Boolean) as string[];
+
+    if (applicationIds.length === 0) {
+      setError("This job has no applications to assign yet.");
+      return;
+    }
+
+    setAssigningRecruiter(true);
+    setError("");
+    setSuccess("");
+
+    const { error: updateError } = await supabase
+      .from("applications")
+      .update({ recruiter_id: recruiterId })
+      .in("id", applicationIds);
+
+    if (updateError) {
+      setError(updateError.message);
+    } else {
+      setApplications((current) =>
+        current.map((application) =>
+          applicationIds.includes(application.id || "")
+            ? { ...application, recruiter_id: recruiterId }
+            : application
+        )
+      );
+      setSuccess("Recruiter assigned to this job's applications.");
+    }
+
+    setAssigningRecruiter(false);
+  }
+
+  function getJobRecruiterSelection(job: Job) {
+    const assignedRecruiters = Array.from(
+      new Set(
+        applications
+          .filter((application) => applicationMatchesJob(application, job))
+          .map((application) => application.recruiter_id)
+          .filter(Boolean)
+      )
+    ) as string[];
+
+    return (
+      jobRecruiterSelections[job.id] ||
+      (assignedRecruiters.length === 1 ? assignedRecruiters[0] : "")
+    );
+  }
+
+  async function assignRecruiterFromJobRow(job: Job) {
+    const recruiterId = getJobRecruiterSelection(job);
+    const applicationIds = applications
+      .filter((application) => applicationMatchesJob(application, job))
+      .map((application) => application.id)
+      .filter(Boolean) as string[];
+
+    if (!recruiterId || applicationIds.length === 0) {
+      setError(
+        applicationIds.length === 0
+          ? "This job has no applications to assign yet."
+          : "Select a recruiter first."
+      );
+      return;
+    }
+
+    setAssigningRecruiter(true);
+    setError("");
+    setSuccess("");
+
+    const { error: updateError } = await supabase
+      .from("applications")
+      .update({ recruiter_id: recruiterId })
+      .in("id", applicationIds);
+
+    if (updateError) {
+      setError(updateError.message);
+    } else {
+      setApplications((current) =>
+        current.map((application) =>
+          applicationIds.includes(application.id || "")
+            ? { ...application, recruiter_id: recruiterId }
+            : application
+        )
+      );
+      setSuccess(`${job.title || "Job"} recruiter assignment saved.`);
+    }
+
+    setAssigningRecruiter(false);
+  }
 
   /*
    * =========================================================
@@ -623,6 +788,12 @@ function RecruiterJobsContent() {
      * create the submission record.
      */
 
+    const jobCandidateNumber =
+      await allocateJobCandidateNumber(
+        supabase,
+        job.id
+      );
+
     const { data, error: insertError } =
       await supabase
         .from("applications")
@@ -632,6 +803,7 @@ function RecruiterJobsContent() {
           ),
           job_id: job.id,
           status: "viewed",
+          job_candidate_number: jobCandidateNumber,
         })
         .select("*")
         .single();
@@ -698,11 +870,19 @@ function RecruiterJobsContent() {
        */
 
       if (application?.id) {
+        const jobCandidateNumber =
+          application.job_candidate_number ??
+          await allocateJobCandidateNumber(
+            supabase,
+            selectedJob.id
+          );
+
         const { error: updateError } =
           await supabase
             .from("applications")
             .update({
               status: newStatus,
+              job_candidate_number: jobCandidateNumber,
             })
             .eq(
               "id",
@@ -721,6 +901,7 @@ function RecruiterJobsContent() {
               ? {
                   ...item,
                   status: newStatus,
+                  job_candidate_number: jobCandidateNumber,
                 }
               : item
           )
@@ -745,6 +926,12 @@ function RecruiterJobsContent() {
           );
         }
 
+        const jobCandidateNumber =
+          await allocateJobCandidateNumber(
+            supabase,
+            selectedJob.id
+          );
+
         const { data, error: insertError } =
           await supabase
             .from("applications")
@@ -753,6 +940,7 @@ function RecruiterJobsContent() {
                 databaseCandidateId,
               job_id: selectedJob.id,
               status: newStatus,
+              job_candidate_number: jobCandidateNumber,
             })
             .select("*")
             .single();
@@ -1017,9 +1205,20 @@ function RecruiterJobsContent() {
         return false;
       }
 
+      const requestedJobStatus =
+        requestedStatus === "active"
+          ? "published"
+          : requestedStatus === "hold"
+            ? "paused"
+            : requestedStatus;
+      const effectiveStatusFilter =
+        statusFilter !== "all"
+          ? statusFilter
+          : requestedJobStatus || "all";
+
       if (
-        statusFilter !== "all" &&
-        job.status !== statusFilter
+        effectiveStatusFilter !== "all" &&
+        normalizeJobStatus(job.status) !== effectiveStatusFilter
       ) {
         return false;
       }
@@ -1045,6 +1244,7 @@ function RecruiterJobsContent() {
     search,
     clientFilter,
     statusFilter,
+    requestedStatus,
   ]);
 
   /*
@@ -1357,6 +1557,53 @@ function RecruiterJobsContent() {
                 {selectedJob.company}
               </span>
 
+            </div>
+
+            <div className="mt-5 flex flex-col gap-3 border-t border-white/10 pt-5 sm:flex-row sm:items-end">
+              <label className="block min-w-0 flex-1">
+                <span className="text-xs font-semibold uppercase tracking-wider text-white/35">
+                  Assign recruiter to this job&apos;s applications
+                </span>
+                <select
+                  value={
+                    selectedRecruiterId ||
+                    (selectedJobRecruiterIds.length === 1
+                      ? selectedJobRecruiterIds[0]
+                      : "")
+                  }
+                  onChange={(event) =>
+                    setSelectedRecruiterId(event.target.value)
+                  }
+                  className="mt-2 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white outline-none focus:border-purple-400/40"
+                >
+                  <option value="" className="bg-[#0b0c13] text-white">
+                    {selectedJobRecruiterIds.length > 1
+                      ? "Multiple recruiters assigned"
+                      : "Select recruiter"}
+                  </option>
+                  {recruiters.map((recruiter) => (
+                    <option
+                      key={recruiter.id}
+                      value={recruiter.id}
+                      className="bg-[#0b0c13] text-white"
+                    >
+                      {recruiter.full_name || recruiter.email || recruiter.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                disabled={
+                  assigningRecruiter ||
+                  (!selectedRecruiterId &&
+                    selectedJobRecruiterIds.length !== 1)
+                }
+                onClick={assignRecruiterToJob}
+                className="h-11 rounded-xl bg-white px-5 text-sm font-semibold text-black hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {assigningRecruiter ? "Saving..." : "Save Assignment"}
+              </button>
             </div>
 
           </div>
@@ -1844,6 +2091,10 @@ function RecruiterJobsContent() {
                       </th>
 
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/30">
+                        Job Candidate
+                      </th>
+
+                      <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/30">
                         Candidate
                       </th>
 
@@ -1885,6 +2136,11 @@ function RecruiterJobsContent() {
                             candidate
                           );
 
+                        const application =
+                          getCandidateApplication(
+                            candidate
+                          );
+
                         return (
                           <tr
                             key={id}
@@ -1900,6 +2156,14 @@ function RecruiterJobsContent() {
                               <span className="font-mono text-xs text-purple-200/80">
                                 {candidate.candidate_id ||
                                   "—"}
+                              </span>
+                            </td>
+
+                            <td className="px-5 py-5">
+                              <span className="font-mono text-xs text-cyan-200/80">
+                                {application?.job_candidate_number
+                                  ? `JC-${String(application.job_candidate_number).padStart(3, "0")}`
+                                  : "—"}
                               </span>
                             </td>
 
@@ -2039,7 +2303,7 @@ function RecruiterJobsContent() {
             </h1>
 
             <p className="mt-2 text-sm text-white/40">
-              Manage openings and view each job's candidate pool.
+              Manage openings and view each job&apos;s candidate pool.
             </p>
 
           </div>
@@ -2242,6 +2506,7 @@ function RecruiterJobsContent() {
 
                   {filteredJobs.map(
                     (job) => {
+                      const jobStatus = normalizeJobStatus(job.status);
                       const count =
                         getJobCandidatesCount(
                           job
@@ -2429,8 +2694,8 @@ function RecruiterJobsContent() {
                                   View Public Job
                                 </Link>
 
-                                {job.status ===
-                                  "published" && (
+                                {jobStatus ===
+                                  "active" && (
                                   <button
                                     type="button"
                                     onClick={() =>
@@ -2448,9 +2713,9 @@ function RecruiterJobsContent() {
                                   </button>
                                 )}
 
-                                {(job.status ===
-                                  "paused" ||
-                                  job.status ===
+                                {(jobStatus ===
+                                  "hold" ||
+                                  jobStatus ===
                                     "draft") && (
                                   <button
                                     type="button"
@@ -2469,7 +2734,26 @@ function RecruiterJobsContent() {
                                   </button>
                                 )}
 
-                                {job.status !==
+                                {jobStatus ===
+                                  "closed" && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateJobStatus(
+                                        job.id,
+                                        "published"
+                                      )
+                                    }
+                                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-green-300/80 hover:bg-green-400/[0.06]"
+                                  >
+                                    <Play
+                                      size={15}
+                                    />
+                                    Reopen Job
+                                  </button>
+                                )}
+
+                                {jobStatus !==
                                   "closed" && (
                                   <button
                                     type="button"
@@ -2490,6 +2774,47 @@ function RecruiterJobsContent() {
 
                               </div>
                             )}
+
+                            <div className="mt-3 flex min-w-[280px] flex-col gap-2">
+                              <label className="text-[10px] font-semibold uppercase tracking-wider text-white/30">
+                                Assigned Recruiter
+                              </label>
+                              <select
+                                aria-label={`Assigned recruiter for ${job.title || job.job_id || "job"}`}
+                                value={getJobRecruiterSelection(job)}
+                                onChange={(event) =>
+                                  setJobRecruiterSelections((current) => ({
+                                    ...current,
+                                    [job.id]: event.target.value,
+                                  }))
+                                }
+                                className="h-10 rounded-lg border border-white/10 bg-black/20 px-3 text-xs text-white outline-none focus:border-purple-400/40"
+                              >
+                                <option value="" className="bg-[#0b0c13] text-white">
+                                  Select recruiter
+                                </option>
+                                {recruiters.map((recruiter) => (
+                                  <option
+                                    key={recruiter.id}
+                                    value={recruiter.id}
+                                    className="bg-[#0b0c13] text-white"
+                                  >
+                                    {recruiter.full_name || recruiter.email || recruiter.id}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                disabled={
+                                  assigningRecruiter ||
+                                  !getJobRecruiterSelection(job)
+                                }
+                                onClick={() => assignRecruiterFromJobRow(job)}
+                                className="h-10 rounded-lg bg-white px-3 text-xs font-semibold text-black hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {assigningRecruiter ? "Saving..." : "Save Assignment"}
+                              </button>
+                            </div>
 
                           </td>
 

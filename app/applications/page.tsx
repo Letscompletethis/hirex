@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
+import { allocateJobCandidateNumber } from "../../lib/job-candidate-number";
 import {
   ExternalLink,
   FileText,
@@ -34,11 +35,21 @@ type ApplicationRow = {
   job_id: string;
   status: string;
   applied_at: string;
+  recruiter_id: string | null;
+  job_candidate_number: number | null;
 };
 
 type Application = ApplicationRow & {
   candidate: Candidate | null;
   job: Job | null;
+};
+
+type Recruiter = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  role: string;
+  status: string;
 };
 
 const APPLICATION_STATUSES = [
@@ -62,6 +73,10 @@ export default function ApplicationsPage() {
   const [updatingId, setUpdatingId] = useState<string | null>(
     null
   );
+  const [recruiters, setRecruiters] = useState<Recruiter[]>([]);
+  const [assigningId, setAssigningId] = useState<string | null>(
+    null
+  );
 
   async function loadApplications() {
     setLoading(true);
@@ -72,7 +87,7 @@ export default function ApplicationsPage() {
         await supabase
           .from("applications")
           .select(
-            "id,candidate_id,job_id,status,applied_at"
+            "id,candidate_id,job_id,status,applied_at,recruiter_id,job_candidate_number"
           )
           .order("applied_at", { ascending: false });
 
@@ -164,7 +179,25 @@ export default function ApplicationsPage() {
   }
 
   useEffect(() => {
-    loadApplications();
+    void Promise.resolve().then(loadApplications);
+
+    async function loadRecruiters() {
+      const { data, error: recruitersError } = await supabase
+        .from("profiles")
+        .select("id,full_name,email,role,status")
+        .in("role", ["owner", "admin", "recruiter"])
+        .eq("status", "active")
+        .order("full_name", { ascending: true });
+
+      if (recruitersError) {
+        console.error("Recruiter lookup error:", recruitersError);
+        return;
+      }
+
+      setRecruiters((data || []) as Recruiter[]);
+    }
+
+    void loadRecruiters();
   }, []);
 
   const filteredApplications = useMemo(() => {
@@ -243,41 +276,120 @@ export default function ApplicationsPage() {
   ) {
     setUpdatingId(applicationId);
 
-    const { error: updateError } =
-      await supabase
-        .from("applications")
-        .update({
-          status: newStatus,
-        })
-        .eq("id", applicationId);
+    try {
+      const application = applications.find(
+        (item) => item.id === applicationId
+      );
+      const jobCandidateNumber =
+        application?.job_candidate_number ||
+        (application
+          ? await allocateJobCandidateNumber(
+              supabase,
+              application.job_id
+            )
+          : null);
 
-    if (updateError) {
+      const { error: updateError } =
+        await supabase
+          .from("applications")
+          .update({
+            status: newStatus,
+            ...(jobCandidateNumber
+              ? { job_candidate_number: jobCandidateNumber }
+              : {}),
+          })
+          .eq("id", applicationId);
+
+      if (updateError) {
+        throw new Error(updateError.message);
+      }
+
+      setApplications((current) =>
+        current.map((item) =>
+          item.id === applicationId
+            ? {
+                ...item,
+                status: newStatus,
+                job_candidate_number:
+                  jobCandidateNumber ||
+                  item.job_candidate_number,
+              }
+            : item
+        )
+      );
+    } catch (updateError) {
       console.error(
         "Application status update error:",
         updateError
       );
-
       alert(
         "Could not update application status: " +
-          updateError.message
+          (updateError instanceof Error
+            ? updateError.message
+            : "Unknown error")
       );
-
+    } finally {
       setUpdatingId(null);
-      return;
     }
+  }
 
-    setApplications((current) =>
-      current.map((application) =>
-        application.id === applicationId
-          ? {
-              ...application,
-              status: newStatus,
-            }
-          : application
-      )
-    );
+  async function assignRecruiter(
+    applicationId: string,
+    recruiterId: string
+  ) {
+    setAssigningId(applicationId);
 
-    setUpdatingId(null);
+    try {
+      const application = applications.find(
+        (item) => item.id === applicationId
+      );
+      const jobCandidateNumber =
+        application?.job_candidate_number ||
+        (application
+          ? await allocateJobCandidateNumber(
+              supabase,
+              application.job_id
+            )
+          : null);
+
+      const { error: updateError } = await supabase
+        .from("applications")
+        .update({
+          recruiter_id: recruiterId || null,
+          ...(jobCandidateNumber
+            ? { job_candidate_number: jobCandidateNumber }
+            : {}),
+        })
+        .eq("id", applicationId);
+
+      if (updateError) {
+        throw new Error(updateError.message);
+      }
+
+      setApplications((current) =>
+        current.map((item) =>
+          item.id === applicationId
+            ? {
+                ...item,
+                recruiter_id: recruiterId || null,
+                job_candidate_number:
+                  jobCandidateNumber ||
+                  item.job_candidate_number,
+              }
+            : item
+        )
+      );
+    } catch (updateError) {
+      console.error("Recruiter assignment error:", updateError);
+      alert(
+        "Could not assign recruiter: " +
+          (updateError instanceof Error
+            ? updateError.message
+            : "Unknown error")
+      );
+    } finally {
+      setAssigningId(null);
+    }
   }
 
   async function openResume(
@@ -425,13 +537,17 @@ export default function ApplicationsPage() {
           filteredApplications.length > 0 && (
             <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#05060b]/90 shadow-2xl">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1600px]">
+                  <table className="w-full min-w-[1800px]">
 
                   <thead>
                     <tr className="border-b border-white/10 bg-white/[0.025] text-left">
 
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/35">
                         Candidate ID
+                      </th>
+
+                      <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/35">
+                        Job Candidate ID
                       </th>
 
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/35">
@@ -464,6 +580,10 @@ export default function ApplicationsPage() {
 
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/35">
                         Status
+                      </th>
+
+                      <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/35">
+                        Recruiter
                       </th>
 
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/35">
@@ -507,6 +627,13 @@ export default function ApplicationsPage() {
                             <td className="px-5 py-5 text-sm font-medium text-purple-200">
                               {candidate?.candidate_id ||
                                 "—"}
+                            </td>
+
+                            {/* Job Candidate ID */}
+                            <td className="px-5 py-5 text-sm font-medium text-cyan-200">
+                              {application.job_candidate_number
+                                ? `JC-${String(application.job_candidate_number).padStart(3, "0")}`
+                                : "—"}
                             </td>
 
                             {/* First Name */}
@@ -598,6 +725,34 @@ export default function ApplicationsPage() {
                                 )}
 
                               </div>
+                            </td>
+
+                            {/* Applied */}
+                            <td className="px-5 py-5">
+                              <select
+                                value={application.recruiter_id || ""}
+                                disabled={assigningId === application.id}
+                                onChange={(event) =>
+                                  assignRecruiter(
+                                    application.id,
+                                    event.target.value
+                                  )
+                                }
+                                className="min-w-48 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white outline-none focus:border-purple-300/40 disabled:opacity-50"
+                              >
+                                <option value="" className="bg-[#080910] text-white">
+                                  Unassigned
+                                </option>
+                                {recruiters.map((recruiter) => (
+                                  <option
+                                    key={recruiter.id}
+                                    value={recruiter.id}
+                                    className="bg-[#080910] text-white"
+                                  >
+                                    {recruiter.full_name || recruiter.email || recruiter.id}
+                                  </option>
+                                ))}
+                              </select>
                             </td>
 
                             {/* Applied */}

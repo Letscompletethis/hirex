@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import {
   ArrowLeft,
   FileText,
@@ -21,8 +21,6 @@ type Job = {
 
 export default function ApplyPage() {
   const params = useParams();
-  const router = useRouter();
-
   const id = params?.id as string;
 
   const [job, setJob] = useState<Job | null>(null);
@@ -114,93 +112,25 @@ export default function ApplyPage() {
     setSubmitting(true);
 
     try {
-      /*
-       * Generate candidate ID.
-       */
-      const { count, error: countError } = await supabase
-        .from("candidates")
-        .select("*", {
-          count: "exact",
-          head: true,
-        });
+      const formData = new FormData();
+      formData.append("jobId", job.id);
+      formData.append("firstName", firstName.trim());
+      formData.append("lastName", lastName.trim());
+      formData.append("email", email.trim().toLowerCase());
+      formData.append("phone", phone.trim());
+      formData.append("currentJobTitle", currentJobTitle.trim());
+      formData.append("resume", resume);
 
-      if (countError) {
-        throw new Error(countError.message);
-      }
+      const response = await fetch("/api/applications", {
+        method: "POST",
+        body: formData,
+      });
 
-      const candidateNumber = (count ?? 0) + 1;
+      const result = await response.json();
 
-      const candidateId =
-        `HX-CAN-${String(candidateNumber).padStart(5, "0")}`;
-
-      /*
-       * Create a unique resume path.
-       */
-      const fileExtension = "pdf";
-
-      const resumePath =
-        `${candidateId}/${Date.now()}-${crypto.randomUUID()}.${fileExtension}`;
-
-      /*
-       * Upload resume.
-       */
-      const { error: uploadError } = await supabase.storage
-        .from("resumes")
-        .upload(resumePath, resume, {
-          contentType: "application/pdf",
-          upsert: false,
-        });
-
-      if (uploadError) {
+      if (!response.ok) {
         throw new Error(
-          "Resume upload failed: " + uploadError.message
-        );
-      }
-
-      /*
-       * Create candidate.
-       */
-      const { data: candidate, error: candidateError } =
-        await supabase
-          .from("candidates")
-          .insert({
-            candidate_id: candidateId,
-            first_name: firstName.trim(),
-            last_name: lastName.trim(),
-            email: email.trim(),
-            phone: phone.trim(),
-            resume_path: resumePath,
-            job_id: job.id,
-            job_title: job.title,
-            current_job_title:
-              currentJobTitle.trim() || null,
-            status: "new",
-          })
-          .select("ID")
-          .single();
-
-      if (candidateError) {
-        throw new Error(
-          "Could not create candidate: " +
-            candidateError.message
-        );
-      }
-
-      /*
-       * Create application.
-       */
-      const { error: applicationError } = await supabase
-        .from("applications")
-        .insert({
-          candidate_id: candidate.ID,
-          job_id: job.id,
-          status: "new",
-        });
-
-      if (applicationError) {
-        throw new Error(
-          "Could not create application: " +
-            applicationError.message
+          result?.error || "Unable to submit your application."
         );
       }
 

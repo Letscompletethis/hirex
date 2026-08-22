@@ -37,6 +37,20 @@ type Application = {
   status: string | null;
   applied_at: string | null;
   recruiter_id?: string | null;
+  job_candidate_number?: number | null;
+};
+
+type CandidateSummary = {
+  ID: string;
+  candidate_id: string | null;
+  first_name: string | null;
+  last_name: string | null;
+};
+
+type RecruiterSummary = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
 };
 
 type DateRange =
@@ -182,6 +196,10 @@ export default function RecruiterDashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applications, setApplications] =
     useState<Application[]>([]);
+  const [candidateSummaries, setCandidateSummaries] =
+    useState<CandidateSummary[]>([]);
+  const [recruiterSummaries, setRecruiterSummaries] =
+    useState<RecruiterSummary[]>([]);
 
   const [candidateCount, setCandidateCount] =
     useState(0);
@@ -199,6 +217,9 @@ export default function RecruiterDashboard() {
     useState("Recruiter");
 
   const [isOwner, setIsOwner] =
+    useState(false);
+
+  const [isPrivilegedUser, setIsPrivilegedUser] =
     useState(false);
 
   const [dateRange, setDateRange] =
@@ -235,17 +256,27 @@ export default function RecruiterDashboard() {
 
       setCurrentUserName(fullName);
 
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role,status")
+        .eq("id", user.id)
+        .maybeSingle();
+
       const role = String(
-        user.user_metadata?.role ||
+        profile?.role ||
+          user.user_metadata?.role ||
           user.user_metadata?.user_role ||
           ""
       ).toLowerCase();
 
-      setIsOwner(
-        role === "owner" ||
-          role === "admin" ||
-          role === "super_admin"
-      );
+      const privileged = [
+        "owner",
+        "admin",
+        "super_admin",
+      ].includes(role);
+
+      setIsOwner(privileged);
+      setIsPrivilegedUser(privileged);
 
       /*
        * JOBS
@@ -254,7 +285,7 @@ export default function RecruiterDashboard() {
       const jobsRequest = await supabase
         .from("jobs")
         .select(
-          "id,job_id,title,company,location,status,openings,created_at,recruiter_id"
+          "id,job_id,title,company,location,status,openings,created_at"
         )
         .order("created_at", {
           ascending: false,
@@ -263,69 +294,32 @@ export default function RecruiterDashboard() {
       let jobsData: Job[] = [];
 
       if (jobsRequest.error) {
-        const fallback = await supabase
-          .from("jobs")
-          .select(
-            "id,job_id,title,company,location,status,openings,created_at"
-          )
-          .order("created_at", {
-            ascending: false,
-          });
-
-        if (fallback.error) {
-          throw new Error(
-            `Jobs: ${fallback.error.message}`
-          );
-        }
-
-        jobsData =
-          (fallback.data as Job[]) || [];
-      } else {
-        jobsData =
-          (jobsRequest.data as Job[]) || [];
+        throw new Error(`Jobs: ${jobsRequest.error.message}`);
       }
+
+      jobsData = (jobsRequest.data as Job[]) || [];
 
       /*
        * APPLICATIONS
        */
 
-      const applicationsRequest =
-        await supabase
-          .from("applications")
-          .select(
-            "id,candidate_id,job_id,status,applied_at,recruiter_id"
-          )
+      const applicationsRequest = await supabase
+        .from("applications")
+        .select(
+          "id,candidate_id,job_id,status,applied_at,recruiter_id,job_candidate_number"
+        )
           .order("applied_at", {
             ascending: false,
           });
-
-      let applicationsData: Application[] =
-        [];
 
       if (applicationsRequest.error) {
-        const fallback = await supabase
-          .from("applications")
-          .select(
-            "id,candidate_id,job_id,status,applied_at"
-          )
-          .order("applied_at", {
-            ascending: false,
-          });
-
-        if (fallback.error) {
-          throw new Error(
-            `Applications: ${fallback.error.message}`
-          );
-        }
-
-        applicationsData =
-          (fallback.data as Application[]) ||
-          [];
-      } else {
-        applicationsData =
-          (applicationsRequest.data as Application[]) ||
-          [];
+        throw new Error(
+          `Applications: ${applicationsRequest.error.message}`
+        );
       }
+
+      const applicationsData =
+        (applicationsRequest.data as Application[]) || [];
 
       /*
        * CANDIDATES
@@ -340,7 +334,7 @@ export default function RecruiterDashboard() {
       const candidatesRequest =
         await supabase
           .from("candidates")
-          .select("ID");
+          .select("ID,candidate_id,first_name,last_name");
 
       if (candidatesRequest.error) {
         throw new Error(
@@ -349,11 +343,24 @@ export default function RecruiterDashboard() {
       }
 
       const candidatesData =
-        candidatesRequest.data || [];
+        (candidatesRequest.data || []) as CandidateSummary[];
 
       setCandidateCount(
         candidatesData.length
       );
+      setCandidateSummaries(candidatesData);
+
+      const recruitersRequest = await supabase
+        .from("profiles")
+        .select("id,full_name,email")
+        .in("role", ["owner", "admin", "recruiter"])
+        .eq("status", "active");
+
+      if (!recruitersRequest.error) {
+        setRecruiterSummaries(
+          (recruitersRequest.data || []) as RecruiterSummary[]
+        );
+      }
 
       setJobs(jobsData);
       setApplications(
@@ -376,7 +383,7 @@ export default function RecruiterDashboard() {
   }
 
   useEffect(() => {
-    loadDashboard();
+    void Promise.resolve().then(loadDashboard);
   }, []);
 
   const filteredApplications =
@@ -449,86 +456,57 @@ export default function RecruiterDashboard() {
     };
   }, [filteredJobs]);
 
+  const recruiterApplications =
+    useMemo(() => {
+      if (isPrivilegedUser) {
+        return filteredApplications;
+      }
+
+      return filteredApplications.filter(
+        (application) =>
+          application.recruiter_id === currentUserId
+      );
+    }, [
+      filteredApplications,
+      currentUserId,
+      isPrivilegedUser,
+    ]);
+
   const pipelineCounts =
     useMemo(() => {
       return {
-        new: filteredApplications.filter(
-          (application) =>
-            normalizeApplicationStatus(
-              application.status
-            ) === "new"
+        new: recruiterApplications.filter(
+          (application) => normalizeApplicationStatus(application.status) === "new"
         ).length,
-
-        submission:
-          filteredApplications.filter(
-            (application) =>
-              normalizeApplicationStatus(
-                application.status
-              ) === "submission"
-          ).length,
-
-        interview:
-          filteredApplications.filter(
-            (application) =>
-              normalizeApplicationStatus(
-                application.status
-              ) === "interview"
-          ).length,
-
-        offer:
-          filteredApplications.filter(
-            (application) =>
-              normalizeApplicationStatus(
-                application.status
-              ) === "offer"
-          ).length,
-
-        started:
-          filteredApplications.filter(
-            (application) =>
-              normalizeApplicationStatus(
-                application.status
-              ) === "started"
-          ).length,
-
-        rejected:
-          filteredApplications.filter(
-            (application) =>
-              normalizeApplicationStatus(
-                application.status
-              ) === "rejected"
-          ).length,
+        submission: recruiterApplications.filter(
+          (application) => normalizeApplicationStatus(application.status) === "submission"
+        ).length,
+        interview: recruiterApplications.filter(
+          (application) => normalizeApplicationStatus(application.status) === "interview"
+        ).length,
+        offer: recruiterApplications.filter(
+          (application) => normalizeApplicationStatus(application.status) === "offer"
+        ).length,
+        started: recruiterApplications.filter(
+          (application) => normalizeApplicationStatus(application.status) === "started"
+        ).length,
+        rejected: recruiterApplications.filter(
+          (application) => normalizeApplicationStatus(application.status) === "rejected"
+        ).length,
       };
-    }, [filteredApplications]);
+    }, [recruiterApplications]);
 
   const recruiterJobs = useMemo(() => {
-    const assigned = jobs.filter(
-      (job) =>
-        job.recruiter_id ===
-        currentUserId
+    if (isPrivilegedUser) {
+      return jobs;
+    }
+
+    const assignedJobIds = new Set(
+      recruiterApplications.map((application) => application.job_id)
     );
 
-    return assigned.length
-      ? assigned
-      : jobs;
-  }, [jobs, currentUserId]);
-
-  const recruiterApplications =
-    useMemo(() => {
-      const assigned =
-        applications.filter(
-          (application) =>
-            application.recruiter_id ===
-            currentUserId
-        );
-
-      return assigned.length
-        ? assigned
-        : applications;
-    }, [
-      applications,
-      currentUserId,
-    ]);
+    return jobs.filter((job) => assignedJobIds.has(job.id));
+  }, [jobs, isPrivilegedUser, recruiterApplications]);
 
   const recruiterSubmissions =
     recruiterApplications.filter(
@@ -563,10 +541,19 @@ export default function RecruiterDashboard() {
     ).length;
 
   const recentApplications =
-    filteredApplications.slice(0, 6);
+    recruiterApplications.slice(0, 6);
 
-  const recentJobs =
-    filteredJobs.slice(0, 5);
+  const recentJobs = recruiterJobs.slice(0, 5);
+
+  const candidateById = useMemo(
+    () => new Map(candidateSummaries.map((candidate) => [candidate.ID, candidate])),
+    [candidateSummaries]
+  );
+
+  const recruiterById = useMemo(
+    () => new Map(recruiterSummaries.map((recruiter) => [recruiter.id, recruiter])),
+    [recruiterSummaries]
+  );
 
   function formatDate(
     value: string | null
@@ -1041,6 +1028,12 @@ export default function RecruiterDashboard() {
                   <div className="divide-y divide-white/[0.06]">
                     {recentApplications.map(
                       (application) => (
+                        (() => {
+                          const candidate = candidateById.get(application.candidate_id);
+                          const recruiter = application.recruiter_id
+                            ? recruiterById.get(application.recruiter_id)
+                            : null;
+                          return (
                         <div
                           key={
                             application.id
@@ -1049,17 +1042,20 @@ export default function RecruiterDashboard() {
                         >
                           <div className="min-w-0">
                             <p className="truncate text-sm font-medium">
-                              Candidate{" "}
-                              {application.candidate_id
-                                ? application.candidate_id.slice(
-                                    0,
-                                    8
-                                  )
-                                : "Unknown"}
+                              {candidate
+                                ? `${candidate.first_name || ""} ${candidate.last_name || ""}`.trim()
+                                : "Unknown Candidate"}
                             </p>
 
                             <p className="mt-1 text-xs text-white/35">
-                              Applied{" "}
+                              {candidate?.candidate_id || "No candidate X-number"}
+                              {application.job_candidate_number
+                                ? ` · JC-${String(application.job_candidate_number).padStart(3, "0")}`
+                                : ""}
+                              {recruiter
+                                ? ` · ${recruiter.full_name || recruiter.email || "Assigned recruiter"}`
+                                : " · Unassigned"}
+                              {" · Applied "}
                               {formatDate(
                                 application.applied_at
                               )}
@@ -1071,6 +1067,8 @@ export default function RecruiterDashboard() {
                               "New"}
                           </span>
                         </div>
+                          );
+                        })()
                       )
                     )}
                   </div>
@@ -1106,7 +1104,7 @@ export default function RecruiterDashboard() {
                       (job) => (
                         <a
                           key={job.id}
-                          href={`/recruiter/jobs/${job.id}`}
+                          href={`/recruiter/jobs?job=${encodeURIComponent(job.id)}`}
                           className="block px-6 py-4 transition hover:bg-white/[0.025]"
                         >
                           <div className="flex items-start justify-between gap-4">

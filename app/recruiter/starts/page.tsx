@@ -2,17 +2,31 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
+import {
+  type ApplicationSummary,
+  formatJobCandidateNumber,
+} from "../../../lib/application-display";
+import { getRecruiterApplicationScope } from "../../../lib/recruiter-scope";
 
 export default function StartsPage() {
-  const [items, setItems] = useState<any[]>([]);
+  const [items, setItems] = useState<ApplicationSummary[]>([]);
 
   useEffect(() => {
     async function load() {
-      const { data } = await supabase
+      const recruiterId = await getRecruiterApplicationScope(supabase);
+      let request = supabase
         .from("applications")
-        .select("*")
+        .select("id,candidate_id,job_id,status,applied_at,recruiter_id,job_candidate_number")
         .in("status", ["hired", "started", "start"])
         .order("applied_at", { ascending: false });
+
+      if (recruiterId === "") {
+        setItems([]);
+        return;
+      }
+
+      if (recruiterId) request = request.eq("recruiter_id", recruiterId);
+      const { data } = await request;
 
       setItems(data || []);
     }
@@ -40,7 +54,7 @@ export default function StartsPage() {
             >
               <p className="text-sm">{item.candidate_id}</p>
               <p className="mt-1 text-xs text-white/35">
-                Job: {item.job_id}
+                Job: {item.job_id} · {formatJobCandidateNumber(item.job_candidate_number)}
               </p>
             </div>
           ))

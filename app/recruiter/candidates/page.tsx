@@ -22,6 +22,12 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
+import { allocateJobCandidateNumber } from "../../../lib/job-candidate-number";
+import {
+  parseCandidateNotes,
+  serializeCandidateNotes,
+  type CandidateNote,
+} from "../../../lib/candidate-notes";
 
 type Candidate = {
   ID?: string;
@@ -37,6 +43,9 @@ type Candidate = {
   status: string | null;
   created_at: string | null;
   current_job_title: string | null;
+  notes: string | null;
+  viewed_at?: string | null;
+  candidate_number?: number | null;
 };
 
 type Job = {
@@ -92,6 +101,8 @@ export default function RecruiterCandidatesPage() {
     useState<number | null>(null);
 
   const [resumeUrl, setResumeUrl] = useState("");
+  const [noteText, setNoteText] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
 
   async function loadCandidates() {
     setLoading(true);
@@ -142,7 +153,7 @@ export default function RecruiterCandidatesPage() {
   }
 
   useEffect(() => {
-    loadCandidates();
+    void Promise.resolve().then(loadCandidates);
   }, []);
 
   function getCandidateDbId(candidate: Candidate) {
@@ -264,7 +275,7 @@ export default function RecruiterCandidatesPage() {
     );
 
   useEffect(() => {
-    setCurrentPage(1);
+    void Promise.resolve().then(() => setCurrentPage(1));
   }, [
     search,
     statusFilter,
@@ -356,28 +367,38 @@ export default function RecruiterCandidatesPage() {
 
     try {
       for (const candidateId of selectedIds) {
-        let result = await supabase
-          .from("candidates")
-          .update({
-            job_id: selectedJob.id,
-            job_title: selectedJob.title,
-          })
-          .eq("ID", candidateId);
+        const existingApplication = await supabase
+          .from("applications")
+          .select("id")
+          .eq("candidate_id", candidateId)
+          .eq("job_id", selectedJob.id)
+          .limit(1);
 
-        if (result.error) {
-          result = await supabase
-            .from("candidates")
-            .update({
-              job_id: selectedJob.id,
-              job_title: selectedJob.title,
-            })
-            .eq("id", candidateId);
+        if (existingApplication.error) {
+          throw new Error(existingApplication.error.message);
         }
 
-        if (result.error) {
-          throw new Error(
-            result.error.message
+        if ((existingApplication.data || []).length > 0) {
+          continue;
+        }
+
+        const jobCandidateNumber =
+          await allocateJobCandidateNumber(
+            supabase,
+            selectedJob.id
           );
+
+        const application = await supabase
+          .from("applications")
+          .insert({
+            candidate_id: candidateId,
+            job_id: selectedJob.id,
+            status: "new",
+            job_candidate_number: jobCandidateNumber,
+          });
+
+        if (application.error) {
+          throw new Error(application.error.message);
         }
       }
 
@@ -440,7 +461,7 @@ export default function RecruiterCandidatesPage() {
 
   async function openResume(path: string) {
     try {
-      let finalPath = path;
+      const finalPath = path;
 
       if (
         finalPath.startsWith("http://") ||
@@ -562,6 +583,70 @@ export default function RecruiterCandidatesPage() {
   function closeProfile() {
     setSelectedCandidateIndex(null);
     setResumeUrl("");
+    setNoteText("");
+  }
+
+  async function addCandidateNote(candidate: Candidate) {
+    const text = noteText.trim();
+    const candidateId = getCandidateDbId(candidate);
+
+    if (!text || !candidateId) {
+      return;
+    }
+
+    setSavingNote(true);
+    setError("");
+
+    try {
+      const { data: user } = await supabase.auth.getUser();
+      const { data: profile } = user.user
+        ? await supabase
+            .from("profiles")
+            .select("full_name,email")
+            .eq("id", user.user.id)
+            .maybeSingle()
+        : { data: null };
+      const notes = parseCandidateNotes(candidate.notes);
+      const note: CandidateNote = {
+        id: crypto.randomUUID(),
+        text,
+        author:
+          profile?.full_name ||
+          profile?.email ||
+          user.user?.email ||
+          "HireX",
+        createdAt: new Date().toISOString(),
+      };
+
+      const result = await supabase
+        .from("candidates")
+        .update({
+          notes: serializeCandidateNotes([...notes, note]),
+        })
+        .eq("ID", candidateId);
+
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+
+      setCandidates((current) =>
+        current.map((item) =>
+          getCandidateDbId(item) === candidateId
+            ? {
+                ...item,
+                notes: serializeCandidateNotes([...notes, note]),
+              }
+            : item
+        )
+      );
+      setNoteText("");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to save note."
+      );
+    } finally {
+      setSavingNote(false);
+    }
   }
 
   function goToPreviousCandidate() {
@@ -1597,6 +1682,68 @@ export default function RecruiterCandidatesPage() {
                           selectedCandidate.status
                         )}
                       </span>
+                    </div>
+
+                    <section className="rounded-xl border border-purple-400/20 bg-purple-400/[0.04] p-4">
+                      <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-purple-200/80">
+                        Notes
+                      </h3>
+                      <div className="mt-3 space-y-3">
+                        {parseCandidateNotes(selectedCandidate.notes).map(
+                          (note) => (
+                            <div
+                              key={note.id}
+                              className="rounded-xl border border-white/10 bg-black/20 p-3"
+                            >
+                              <p className="whitespace-pre-wrap text-sm text-white/75">
+                                {note.text}
+                              </p>
+                              <p className="mt-2 text-[11px] text-white/30">
+                                {note.author}
+                                {note.createdAt
+                                  ? ` · ${new Date(note.createdAt).toLocaleString()}`
+                                  : ""}
+                              </p>
+                            </div>
+                          )
+                        )}
+                        <textarea
+                          value={noteText}
+                          onChange={(event) => setNoteText(event.target.value)}
+                          placeholder="Write a note..."
+                          rows={3}
+                          className="w-full resize-none rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-purple-400/40"
+                        />
+                        <button
+                          type="button"
+                          disabled={savingNote || !noteText.trim()}
+                          onClick={() => addCandidateNote(selectedCandidate)}
+                          className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {savingNote ? "Saving..." : "Add Note"}
+                        </button>
+                      </div>
+                    </section>
+
+                    <div>
+                      <p className="text-xs text-white/25">Activity</p>
+                      <div className="mt-2 space-y-2 text-sm text-white/60">
+                        <p>
+                          Candidate record created
+                          {selectedCandidate.created_at
+                            ? ` · ${new Date(selectedCandidate.created_at).toLocaleString()}`
+                            : ""}
+                        </p>
+                        {selectedCandidate.viewed_at && (
+                          <p>
+                            Profile viewed · {new Date(selectedCandidate.viewed_at).toLocaleString()}
+                          </p>
+                        )}
+                        <p>
+                          {parseCandidateNotes(selectedCandidate.notes).length} note
+                          {parseCandidateNotes(selectedCandidate.notes).length === 1 ? "" : "s"} saved
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </aside>

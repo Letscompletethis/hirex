@@ -57,6 +57,28 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
+  if (isRecruiterRoute && !isPublicAuthPage && user) {
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("role,status")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const role = String(profile?.role || "").toLowerCase();
+    const status = String(profile?.status || "").toLowerCase();
+    const isRecruiter = ["owner", "admin", "super_admin", "recruiter"].includes(
+      role
+    );
+    const isActive = !status || status === "active";
+
+    if (profileError || !profile || !isRecruiter || !isActive) {
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = "/recruiter/login";
+      loginUrl.searchParams.set("error", "unauthorized");
+      return NextResponse.redirect(loginUrl);
+    }
+  }
+
   // Already logged in → don't show login page
   if (pathname === "/recruiter/login" && user) {
     return NextResponse.redirect(

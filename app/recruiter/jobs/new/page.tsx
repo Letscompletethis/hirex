@@ -75,24 +75,30 @@ export default function NewJobPage() {
     }
 
     const year = new Date().getFullYear();
+    const existingJobIds = new Set(
+      (existingJobs ?? []).map((job) => job.job_id)
+    );
+    let jobId = "";
 
-    const numbers = (existingJobs ?? [])
-      .map((job) => {
-        const match = job.job_id?.match(
-          /^HX-\d{4}-(\d+)$/
-        );
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const randomNumber = crypto.getRandomValues(
+        new Uint32Array(1)
+      )[0] % 1000;
+      const candidateJobId = `HX-${year}-${String(
+        randomNumber
+      ).padStart(3, "0")}`;
 
-        return match ? Number(match[1]) : 0;
-      })
-      .filter(Boolean);
+      if (!existingJobIds.has(candidateJobId)) {
+        jobId = candidateJobId;
+        break;
+      }
+    }
 
-    const nextNumber =
-      numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
-
-    const jobId = `HX-${year}-${String(nextNumber).padStart(
-      3,
-      "0"
-    )}`;
+    if (!jobId) {
+      setError("Unable to allocate a job number. Please try again.");
+      setSaving(false);
+      return;
+    }
 
     const { error: insertError } = await supabase
       .from("jobs")

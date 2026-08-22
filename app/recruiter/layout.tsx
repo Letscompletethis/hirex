@@ -17,7 +17,6 @@ import {
   X,
   ChevronRight,
   Building2,
-  BarChart3,
   ShieldCheck,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
@@ -43,6 +42,11 @@ const mainNavigation: NavItem[] = [
     label: "Candidates Pool",
     href: "/recruiter/candidates",
     icon: <Users size={18} />,
+  },
+  {
+    label: "Applications",
+    href: "/recruiter/applications",
+    icon: <FileText size={18} />,
   },
   {
     label: "Submissions",
@@ -81,11 +85,6 @@ const ownerNavigation: NavItem[] = [
     label: "Clients",
     href: "/recruiter/clients",
     icon: <Building2 size={18} />,
-  },
-  {
-    label: "Reports",
-    href: "/recruiter/reports",
-    icon: <BarChart3 size={18} />,
   },
   {
     label: "User Management",
