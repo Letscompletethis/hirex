@@ -10,6 +10,7 @@ import {
   Clock3,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
+import { normalizeJobStatus } from "../../lib/statuses";
 
 type Job = {
   id: string;
@@ -40,21 +41,25 @@ export default function PublicJobsPage() {
       .select(
         "id,job_id,title,company,location,type,experience,status,openings,salary,deadline,created_at"
       )
-      .eq("status", "published")
+      .in("status", ["published", "active", "open"])
       .order("created_at", { ascending: false });
 
     if (jobsError) {
       console.error("Public jobs error:", jobsError);
       setError(jobsError.message);
     } else {
-      setJobs((data ?? []) as Job[]);
+      setJobs(
+        ((data ?? []) as Job[]).filter(
+          (job) => normalizeJobStatus(job.status) === "open"
+        )
+      );
     }
 
     setLoading(false);
   }
 
   useEffect(() => {
-    loadJobs();
+    void Promise.resolve().then(loadJobs);
   }, []);
 
   return (

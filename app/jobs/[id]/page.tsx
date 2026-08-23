@@ -12,6 +12,7 @@ import {
   Users,
 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
+import { normalizeJobStatus } from "../../../lib/statuses";
 
 type Job = {
   id: string;
@@ -52,7 +53,7 @@ export default function JobDetailsPage() {
           "id,job_id,title,company,location,type,experience,status,openings,salary,deadline,description,responsibilities,qualifications,created_at"
         )
         .eq("id", id)
-        .eq("status", "published")
+        .in("status", ["published", "active", "open"])
         .single();
 
       if (jobError) {
@@ -64,7 +65,13 @@ export default function JobDetailsPage() {
           setError(jobError.message);
         }
       } else {
-        setJob(data as Job);
+        const normalizedJob = data as Job;
+
+        if (normalizeJobStatus(normalizedJob.status) !== "open") {
+          setError("This position is no longer available.");
+        } else {
+          setJob(normalizedJob);
+        }
       }
 
       setLoading(false);

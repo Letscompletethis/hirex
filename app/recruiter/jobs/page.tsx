@@ -43,6 +43,7 @@ type Job = {
   salary: string | null;
   deadline: string | null;
   created_at: string | null;
+  updated_at?: string | null;
 };
 
 type Candidate = {
@@ -178,8 +179,16 @@ function RecruiterJobsContent() {
   const [search, setSearch] = useState("");
   const [clientFilter, setClientFilter] =
     useState("all");
+  const [locationFilter, setLocationFilter] =
+    useState("all");
+  const [recruiterFilter, setRecruiterFilter] =
+    useState("all");
   const [statusFilter, setStatusFilter] =
     useState("all");
+  const [createdDateFilter, setCreatedDateFilter] =
+    useState("");
+  const [updatedDateFilter, setUpdatedDateFilter] =
+    useState("");
 
   const [updatingCandidateStatus, setUpdatingCandidateStatus] =
     useState(false);
@@ -456,6 +465,12 @@ function RecruiterJobsContent() {
           .map((job) => job.company)
           .filter(Boolean)
       )
+    ) as string[];
+  }, [jobs]);
+
+  const locations = useMemo(() => {
+    return Array.from(
+      new Set(jobs.map((job) => job.location).filter(Boolean))
     ) as string[];
   }, [jobs]);
 
@@ -1139,6 +1154,38 @@ function RecruiterJobsContent() {
         return false;
       }
 
+      if (
+        locationFilter !== "all" &&
+        job.location !== locationFilter
+      ) {
+        return false;
+      }
+
+      if (
+        recruiterFilter !== "all" &&
+        !applications.some(
+          (application) =>
+            application.recruiter_id === recruiterFilter &&
+            applicationMatchesJob(application, job)
+        )
+      ) {
+        return false;
+      }
+
+      if (
+        createdDateFilter &&
+        !job.created_at?.startsWith(createdDateFilter)
+      ) {
+        return false;
+      }
+
+      if (
+        updatedDateFilter &&
+        !job.updated_at?.startsWith(updatedDateFilter)
+      ) {
+        return false;
+      }
+
       const requestedJobStatus =
         requestedStatus === "active"
           ? "open"
@@ -1177,8 +1224,13 @@ function RecruiterJobsContent() {
     jobs,
     search,
     clientFilter,
+    locationFilter,
+    recruiterFilter,
     statusFilter,
     requestedStatus,
+    createdDateFilter,
+    updatedDateFilter,
+    applications,
   ]);
 
   function toggleJobSelection(jobId: string) {
@@ -2278,9 +2330,9 @@ function RecruiterJobsContent() {
 
         <section className="mb-6 rounded-2xl border border-white/10 bg-white/[0.025] p-4">
 
-          <div className="flex flex-col gap-3 xl:flex-row">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
 
-            <div className="relative flex-1">
+            <div className="relative md:col-span-2 xl:col-span-2">
 
               <Search
                 size={17}
@@ -2328,6 +2380,30 @@ function RecruiterJobsContent() {
             </select>
 
             <select
+              value={locationFilter}
+              onChange={(event) => setLocationFilter(event.target.value)}
+              className="h-11 rounded-xl border border-white/10 bg-[#090a11] px-4 text-sm text-white/70 outline-none focus:border-purple-400/40"
+            >
+              <option value="all">All Locations</option>
+              {locations.map((location) => (
+                <option key={location} value={location}>{location}</option>
+              ))}
+            </select>
+
+            <select
+              value={recruiterFilter}
+              onChange={(event) => setRecruiterFilter(event.target.value)}
+              className="h-11 rounded-xl border border-white/10 bg-[#090a11] px-4 text-sm text-white/70 outline-none focus:border-purple-400/40"
+            >
+              <option value="all">All Recruiters</option>
+              {recruiters.map((recruiter) => (
+                <option key={recruiter.id} value={recruiter.id}>
+                  {recruiter.full_name || recruiter.email || recruiter.id}
+                </option>
+              ))}
+            </select>
+
+            <select
               value={
                 statusFilter
               }
@@ -2349,6 +2425,26 @@ function RecruiterJobsContent() {
               ))}
             </select>
 
+            <label className="flex h-11 items-center gap-2 rounded-xl border border-white/10 bg-[#090a11] px-3 text-xs text-white/40">
+              Created
+              <input
+                type="date"
+                value={createdDateFilter}
+                onChange={(event) => setCreatedDateFilter(event.target.value)}
+                className="min-w-0 flex-1 bg-transparent text-sm text-white/70 outline-none"
+              />
+            </label>
+
+            <label className="flex h-11 items-center gap-2 rounded-xl border border-white/10 bg-[#090a11] px-3 text-xs text-white/40">
+              Updated
+              <input
+                type="date"
+                value={updatedDateFilter}
+                onChange={(event) => setUpdatedDateFilter(event.target.value)}
+                className="min-w-0 flex-1 bg-transparent text-sm text-white/70 outline-none"
+              />
+            </label>
+
             <button
               type="button"
               onClick={() => {
@@ -2356,9 +2452,13 @@ function RecruiterJobsContent() {
                 setClientFilter(
                   "all"
                 );
+                setLocationFilter("all");
+                setRecruiterFilter("all");
                 setStatusFilter(
                   "all"
                 );
+                setCreatedDateFilter("");
+                setUpdatedDateFilter("");
               }}
               className="h-11 rounded-xl border border-white/10 bg-white/[0.03] px-4 text-sm text-white/50 hover:bg-white/[0.07] hover:text-white"
             >

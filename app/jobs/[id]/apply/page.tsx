@@ -10,6 +10,7 @@ import {
   Upload,
 } from "lucide-react";
 import { supabase } from "../../../../lib/supabase";
+import { normalizeJobStatus } from "../../../../lib/statuses";
 
 type Job = {
   id: string;
@@ -47,13 +48,19 @@ export default function ApplyPage() {
         .from("jobs")
         .select("id,job_id,title,company,status")
         .eq("id", id)
-        .eq("status", "published")
+        .in("status", ["published", "active", "open"])
         .single();
 
       if (jobError) {
         console.error("Job loading error:", jobError);
       } else {
-        setJob(data as Job);
+        const normalizedJob = data as Job;
+
+        if (normalizeJobStatus(normalizedJob.status) !== "open") {
+          setError("Applications are closed for this position.");
+        } else {
+          setJob(normalizedJob);
+        }
       }
 
       setLoadingJob(false);

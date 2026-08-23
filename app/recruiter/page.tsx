@@ -56,9 +56,9 @@ type RecruiterSummary = {
 type DateRange =
   | "all"
   | "today"
+  | "yesterday"
   | "7"
-  | "30"
-  | "90"
+  | "month"
   | "custom";
 
 function getDateRangeStart(range: DateRange) {
@@ -69,6 +69,18 @@ function getDateRangeStart(range: DateRange) {
   const date = new Date();
 
   if (range === "today") {
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }
+
+  if (range === "yesterday") {
+    date.setDate(date.getDate() - 1);
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }
+
+  if (range === "month") {
+    date.setDate(1);
     date.setHours(0, 0, 0, 0);
     return date;
   }
@@ -114,6 +126,12 @@ function isWithinDateRange(
 
   if (!start) {
     return true;
+  }
+
+  if (range === "yesterday") {
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    return date < end;
   }
 
   return date >= start;
@@ -632,9 +650,9 @@ export default function RecruiterDashboard() {
                 [
                   ["all", "All Time"],
                   ["today", "Today"],
-                  ["7", "7 Days"],
-                  ["30", "30 Days"],
-                  ["90", "90 Days"],
+                  ["yesterday", "Yesterday"],
+                  ["7", "Last 7 days"],
+                  ["month", "This month"],
                   ["custom", "Custom"],
                 ] as [
                   DateRange,
@@ -696,6 +714,27 @@ export default function RecruiterDashboard() {
                   }
                   className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-white outline-none focus:border-purple-400/40"
                 />
+              </div>
+
+              <div className="flex items-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDateRange("custom")}
+                  className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-black hover:bg-white/90"
+                >
+                  Apply
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateRange("all");
+                    setCustomFrom("");
+                    setCustomTo("");
+                  }}
+                  className="rounded-lg border border-white/10 px-3 py-2 text-xs text-white/55 hover:bg-white/[0.06] hover:text-white"
+                >
+                  Clear
+                </button>
               </div>
             </div>
           )}
