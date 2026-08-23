@@ -2107,7 +2107,7 @@ function RecruiterJobsContent() {
 
                 <div>
                   <p className="text-[10px] uppercase tracking-wider text-orange-200/40">
-                    Offers
+                    Offer
                   </p>
 
                   <p className="mt-1 text-2xl font-semibold">

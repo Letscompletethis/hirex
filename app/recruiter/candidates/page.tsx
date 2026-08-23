@@ -19,7 +19,6 @@ import {
   Phone,
   ExternalLink,
   User,
-  ScanText,
   Upload,
   History,
   StickyNote,
@@ -37,11 +36,7 @@ import {
   APPLICATION_STATUSES,
   formatApplicationStatus,
 } from "../../../lib/statuses";
-import {
-  extractResumeText,
-  extractResumeFile,
-  type ParsedResume,
-} from "../../../lib/resume-text-extraction";
+import { extractResumeFile, type ParsedResume } from "../../../lib/resume-text-extraction";
 
 type Candidate = {
   ID?: string;
@@ -79,10 +74,12 @@ type CandidateApplication = {
   status: string | null;
 };
 
-type UploadResult = {
-  name: string;
-  state: "success" | "failure" | "duplicate";
-  message: string;
+type UploadItem = {
+  id: string;
+  file: File;
+  state: "ready" | "parsing" | "parsed" | "duplicate" | "unsupported" | "failed" | "skipped";
+  parsed?: ParsedResume;
+  message?: string;
   candidateId?: string;
 };
 
@@ -138,17 +135,15 @@ export default function RecruiterCandidatesPage() {
     useState<number | null>(null);
 
   const [resumeUrl, setResumeUrl] = useState("");
-  const [parsedResume, setParsedResume] = useState<ParsedResume | null>(null);
-  const [parsingResume, setParsingResume] = useState(false);
-  const [parseMessage, setParseMessage] = useState("");
   const [noteText, setNoteText] = useState("");
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingNoteText, setEditingNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [applications, setApplications] = useState<CandidateApplication[]>([]);
-  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
-  const [uploadResults, setUploadResults] = useState<UploadResult[]>([]);
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [processingUploads, setProcessingUploads] = useState(false);
+  const [confirmingImports, setConfirmingImports] = useState(false);
   const [notesPanelOpen, setNotesPanelOpen] = useState(false);
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
 
@@ -415,74 +410,102 @@ export default function RecruiterCandidatesPage() {
   }
 
   function handleUploadSelection(event: React.ChangeEvent<HTMLInputElement>) {
-    setUploadFiles(Array.from(event.target.files || []));
-    setUploadResults([]);
+    const files = Array.from(event.target.files || []);
+    setUploadItems((previous) => [
+      ...previous,
+      ...files.map((file) => ({ id: crypto.randomUUID(), file, state: "ready" as const })),
+    ]);
     event.target.value = "";
   }
 
   async function uploadAndParseResumes() {
-    if (!uploadFiles.length) return;
+    const readyItems = uploadItems.filter((item) => item.state === "ready" || item.state === "failed" || item.state === "unsupported");
+    if (!readyItems.length) return;
     setProcessingUploads(true);
-    setUploadResults([]);
     setError("");
-    setSuccess("");
-    const results: UploadResult[] = [];
-    const knownEmails = new Set(
-      candidates.map((candidate) => candidate.email?.trim().toLowerCase()).filter(Boolean)
-    );
-
     try {
-      for (const file of uploadFiles) {
+      for (const item of readyItems) {
+        setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "parsing", message: undefined } : current));
         try {
-          const parsed = await extractResumeFile(file);
-          const email = parsed.email?.trim().toLowerCase() || "";
-          if (!email) {
-            results.push({ name: file.name, state: "failure", message: "No email could be extracted; candidate was not created." });
-            continue;
-          }
-          if (knownEmails.has(email)) {
-            results.push({ name: file.name, state: "duplicate", message: `Skipped: ${email} already exists.` });
-            continue;
-          }
-          const duplicateLookup = await supabase.from("candidates").select("candidate_id").ilike("email", email).limit(1);
-          if (duplicateLookup.error) throw new Error(duplicateLookup.error.message);
-          if (duplicateLookup.data?.length) {
-            knownEmails.add(email);
-            results.push({ name: file.name, state: "duplicate", message: `Skipped: ${email} already exists.` });
-            continue;
-          }
-
-          const candidateId = await allocateCandidateNumber(supabase);
-          const resumePath = `${candidateId}/${Date.now()}-${crypto.randomUUID()}-${file.name}`;
-          const upload = await supabase.storage.from("resumes").upload(resumePath, file, { contentType: file.type || "application/octet-stream", upsert: false });
-          if (upload.error) throw new Error(`Resume upload failed: ${upload.error.message}`);
-
-          const nameParts = (parsed.name || "").trim().split(/\s+/).filter(Boolean);
-          const created = await supabase.from("candidates").insert({
-            candidate_id: candidateId,
-            first_name: nameParts[0] || null,
-            last_name: nameParts.slice(1).join(" ") || null,
-            email,
-            phone: parsed.phone,
-            resume_path: resumePath,
-            status: "new",
-          }).select("*").single();
-          if (created.error) {
-            await supabase.storage.from("resumes").remove([resumePath]);
-            throw new Error(created.error.message);
-          }
-          knownEmails.add(email);
-          results.push({ name: file.name, state: "success", candidateId, message: `Created ${candidateId}.` });
+          const parsed = await extractResumeFile(item.file);
+          setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "parsed", parsed } : current));
         } catch (err) {
           const message = err instanceof Error ? err.message : "Could not process this file.";
-          results.push({ name: file.name, state: "failure", message });
+          const unsupported = message.startsWith("Unsupported format:");
+          setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: unsupported ? "unsupported" : "failed", message } : current));
         }
-        setUploadResults([...results]);
       }
-      setUploadFiles([]);
-      await loadCandidates();
     } finally {
       setProcessingUploads(false);
+    }
+  }
+
+  function updateUploadField(id: string, field: keyof ParsedResume, value: string) {
+    setUploadItems((previous) => previous.map((item) => item.id === id && item.parsed
+      ? { ...item, parsed: { ...item.parsed, [field]: field === "skills" ? value.split(",").map((skill) => skill.trim()).filter(Boolean) : value } }
+      : item));
+  }
+
+  function skipUpload(id: string) {
+    setUploadItems((previous) => previous.map((item) => item.id === id ? { ...item, state: "skipped" } : item));
+  }
+
+  async function retryUpload(item: UploadItem) {
+    setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "parsing", message: undefined } : current));
+    try {
+      const parsed = await extractResumeFile(item.file);
+      setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "parsed", parsed } : current));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not process this file.";
+      setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: message.startsWith("Unsupported format:") ? "unsupported" : "failed", message } : current));
+    }
+  }
+
+  async function confirmImports() {
+    const importable = uploadItems.filter((item) => item.state === "parsed" && item.parsed);
+    if (!importable.length) return;
+    setConfirmingImports(true);
+    setError("");
+    setSuccess("");
+    let createdCount = 0;
+    try {
+      const knownEmails = new Set(candidates.map((candidate) => candidate.email?.trim().toLowerCase()).filter(Boolean));
+      for (const item of importable) {
+        const parsed = item.parsed as ParsedResume;
+        const email = parsed.email?.trim().toLowerCase() || "";
+        if (!email) {
+          setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "failed", message: "Email is required before import." } : current));
+          continue;
+        }
+        const duplicateLookup = await supabase.from("candidates").select("candidate_id").ilike("email", email).limit(1);
+        if (duplicateLookup.error) throw new Error(duplicateLookup.error.message);
+        if (knownEmails.has(email) || duplicateLookup.data?.length) {
+          knownEmails.add(email);
+          setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "duplicate", message: `${email} already exists.` } : current));
+          continue;
+        }
+        const candidateId = await allocateCandidateNumber(supabase);
+        const resumePath = `${candidateId}/${Date.now()}-${crypto.randomUUID()}-${item.file.name}`;
+        const upload = await supabase.storage.from("resumes").upload(resumePath, item.file, { contentType: item.file.type || "application/octet-stream", upsert: false });
+        if (upload.error) throw new Error(`Resume upload failed: ${upload.error.message}`);
+        const nameParts = (parsed.name || "").trim().split(/\s+/).filter(Boolean);
+        const created = await supabase.from("candidates").insert({ candidate_id: candidateId, first_name: nameParts[0] || null, last_name: nameParts.slice(1).join(" ") || null, email, phone: parsed.phone, resume_path: resumePath, status: "new" }).select("*").single();
+        if (created.error) {
+          await supabase.storage.from("resumes").remove([resumePath]);
+          throw new Error(created.error.message);
+        }
+        knownEmails.add(email);
+        createdCount += 1;
+        setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, candidateId, message: `Created ${candidateId}.` } : current));
+      }
+      await loadCandidates();
+      setUploadModalOpen(false);
+      setUploadItems([]);
+      setSuccess(`${createdCount} candidate${createdCount === 1 ? "" : "s"} imported successfully.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not confirm imports.");
+    } finally {
+      setConfirmingImports(false);
     }
   }
 
@@ -602,8 +625,6 @@ export default function RecruiterCandidatesPage() {
     );
 
     setResumeUrl("");
-    setParsedResume(null);
-    setParseMessage("");
     setError("");
 
     if (
@@ -661,43 +682,6 @@ export default function RecruiterCandidatesPage() {
       setError(
         "Unable to open resume."
       );
-    }
-  }
-
-  async function parseResume() {
-    if (!resumeUrl) {
-      setParseMessage("Resume preview is still loading.");
-      return;
-    }
-
-    setParsingResume(true);
-    setParsedResume(null);
-    setParseMessage("");
-
-    try {
-      const response = await fetch(resumeUrl);
-      if (!response.ok) {
-        throw new Error("Resume could not be downloaded.");
-      }
-      const contentType = response.headers.get("content-type")?.toLowerCase() || "";
-      const path = selectedCandidate?.resume_path?.toLowerCase() || "";
-      const isTextResume =
-        contentType.startsWith("text/") ||
-        /\.(txt|md|rtf)(?:$|\?)/.test(path);
-
-      if (!isTextResume) {
-        setParseMessage("Text extraction only. PDF parsing is not supported in this workspace.");
-        return;
-      }
-
-      const parsed = extractResumeText(await response.text());
-      setParsedResume(parsed);
-      setParseMessage("Text extraction complete. Only clearly labelled or pattern-matched fields are shown.");
-    } catch (err) {
-      console.error("Resume parsing error:", err);
-      setParseMessage("Text extraction could not read this resume.");
-    } finally {
-      setParsingResume(false);
     }
   }
 
@@ -784,8 +768,6 @@ export default function RecruiterCandidatesPage() {
   function closeProfile() {
     setSelectedCandidateIndex(null);
     setResumeUrl("");
-    setParsedResume(null);
-    setParseMessage("");
     setNoteText("");
     setEditingNoteId(null);
     setEditingNoteText("");
@@ -909,9 +891,6 @@ export default function RecruiterCandidatesPage() {
     );
 
     setResumeUrl("");
-    setParsedResume(null);
-    setParseMessage("");
-
     if (
       (candidate.status || "new").toLowerCase() ===
       "new"
@@ -1109,41 +1088,10 @@ export default function RecruiterCandidatesPage() {
               <p className="text-sm font-semibold text-purple-100">Parse resumes into the candidate pool</p>
               <p className="mt-1 text-xs text-white/40">Create unassigned candidates from extracted resume contact details.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 py-2.5 text-sm text-white/75 transition hover:bg-white/[0.1]">
-                <Upload size={16} />
-                Parse Resumes
-                <input
-                  type="file"
-                  multiple
-                  accept="application/pdf,.pdf,application/msword,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,text/plain,.txt,.md,.rtf"
-                  onChange={handleUploadSelection}
-                  className="sr-only"
-                />
-              </label>
-              <span className="text-xs text-white/40">{uploadFiles.length} selected</span>
-              <button
-                type="button"
-                onClick={uploadAndParseResumes}
-                disabled={!uploadFiles.length || processingUploads}
-                className="inline-flex items-center gap-2 rounded-xl bg-purple-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-purple-400 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {processingUploads && <Loader2 size={15} className="animate-spin" />}
-                {processingUploads ? "Processing..." : "Upload & Parse"}
-              </button>
-            </div>
+            <button type="button" onClick={() => setUploadModalOpen(true)} className="inline-flex w-fit items-center gap-2 rounded-xl bg-purple-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-purple-400">
+              <Upload size={16} /> Upload & Parse
+            </button>
           </div>
-          {uploadResults.length > 0 && (
-            <div className="mt-4 space-y-2 border-t border-white/10 pt-3">
-              {uploadResults.map((result) => (
-                <div key={`${result.name}-${result.message}`} className="flex flex-wrap items-center gap-2 text-xs">
-                  {result.state === "success" ? <Check size={14} className="text-green-300" /> : result.state === "duplicate" ? <Users size={14} className="text-yellow-300" /> : <X size={14} className="text-red-300" />}
-                  <span className="text-white/70">{result.name}</span>
-                  <span className={result.state === "success" ? "text-green-200/75" : result.state === "duplicate" ? "text-yellow-200/75" : "text-red-200/75"}>{result.message}</span>
-                </div>
-              ))}
-            </div>
-          )}
         </section>
 
         {error && (
@@ -1992,15 +1940,6 @@ export default function RecruiterCandidatesPage() {
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={parseResume}
-                            disabled={parsingResume}
-                            className="inline-flex items-center gap-2 rounded-lg border border-purple-300/20 bg-purple-300/10 px-3 py-2 text-xs text-purple-100 hover:bg-purple-300/20 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {parsingResume ? <Loader2 size={13} className="animate-spin" /> : <ScanText size={13} />}
-                            {parsingResume ? "Extracting..." : "Parse Resume"}
-                          </button>
                           <a
                             href={resumeUrl}
                             target="_blank"
@@ -2012,22 +1951,6 @@ export default function RecruiterCandidatesPage() {
                           </a>
                         </div>
                       </div>
-
-                      {(parseMessage || parsedResume) && (
-                        <section className="shrink-0 border-b border-white/10 bg-purple-300/[0.04] px-4 py-3">
-                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-purple-200/80">Text extraction</p>
-                          {parseMessage && <p className="mt-1 text-xs text-white/45">{parseMessage}</p>}
-                          {parsedResume && (
-                            <dl className="mt-3 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2">
-                              <div><dt className="text-white/30">Name</dt><dd className="text-white/75">{parsedResume.name || "Not found"}</dd></div>
-                              <div><dt className="text-white/30">Email</dt><dd className="text-white/75">{parsedResume.email || "Not found"}</dd></div>
-                              <div><dt className="text-white/30">Phone</dt><dd className="text-white/75">{parsedResume.phone || "Not found"}</dd></div>
-                              <div><dt className="text-white/30">Location</dt><dd className="text-white/75">{parsedResume.location || "Not found"}</dd></div>
-                              <div className="sm:col-span-2"><dt className="text-white/30">Skills</dt><dd className="text-white/75">{parsedResume.skills.length ? parsedResume.skills.join(", ") : "Not found"}</dd></div>
-                            </dl>
-                          )}
-                        </section>
-                      )}
 
                       <iframe
                         src={resumeUrl}
@@ -2055,6 +1978,69 @@ export default function RecruiterCandidatesPage() {
               </div>
             </div>
           </div>
+
+          {uploadModalOpen && (
+            <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-4 backdrop-blur-md" onClick={() => !processingUploads && !confirmingImports && setUploadModalOpen(false)}>
+              <section className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/15 bg-[#0b0d16] shadow-2xl" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="resume-import-title">
+                <div className="flex items-start justify-between border-b border-white/10 px-5 py-5 sm:px-7">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-purple-200/70">Candidate pool</p>
+                    <h2 id="resume-import-title" className="mt-2 text-2xl font-semibold">Upload &amp; Parse</h2>
+                    <p className="mt-1 text-sm text-white/45">Review every extracted field before anything is added.</p>
+                  </div>
+                  <button type="button" onClick={() => setUploadModalOpen(false)} disabled={processingUploads || confirmingImports} className="rounded-lg border border-white/10 p-2 text-white/50 hover:bg-white/[0.08] hover:text-white disabled:opacity-40" aria-label="Close import dialog"><X size={18} /></button>
+                </div>
+
+                <div className="flex-1 space-y-5 overflow-y-auto p-5 sm:p-7">
+                  <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-purple-300/30 bg-purple-300/[0.04] px-5 py-7 text-center transition hover:bg-purple-300/[0.08]">
+                    <Upload size={24} className="text-purple-200" />
+                    <span className="mt-3 text-sm font-semibold text-white/85">Choose resume files</span>
+                    <span className="mt-1 text-xs text-white/40">Text files parse here. PDF, DOC, and DOCX are listed with an exact blocker.</span>
+                    <input type="file" multiple accept="application/pdf,.pdf,application/msword,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,text/plain,.txt,.md,.rtf" onChange={handleUploadSelection} className="sr-only" />
+                  </label>
+
+                  {uploadItems.length === 0 ? (
+                    <div className="rounded-xl border border-white/10 bg-white/[0.02] px-5 py-10 text-center text-sm text-white/35">No files selected yet.</div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-white/10">
+                      <table className="w-full min-w-[760px] text-left text-xs">
+                        <thead className="border-b border-white/10 bg-white/[0.03] text-[10px] uppercase tracking-[0.16em] text-white/35"><tr><th className="px-4 py-3">File</th><th className="px-4 py-3">State</th><th className="px-4 py-3">Review</th><th className="px-4 py-3">Action</th></tr></thead>
+                        <tbody className="divide-y divide-white/10">
+                          {uploadItems.map((item) => {
+                            const parsed = item.parsed;
+                            const stateLabel = item.state === "ready" ? "Ready" : item.state === "parsing" ? "Parsing" : item.state === "parsed" ? "Parsed" : item.state === "unsupported" ? "Unsupported" : item.state === "failed" ? "Failed" : item.state === "duplicate" ? "Duplicate" : "Skipped";
+                            const stateClass = item.state === "parsed" ? "text-green-300" : item.state === "duplicate" ? "text-yellow-300" : item.state === "unsupported" || item.state === "failed" ? "text-red-300" : "text-white/55";
+                            return <tr key={item.id} className="align-top">
+                              <td className="max-w-[220px] px-4 py-4"><p className="truncate font-medium text-white/80">{item.file.name}</p><p className="mt-1 text-white/30">{Math.ceil(item.file.size / 1024)} KB</p></td>
+                              <td className={`px-4 py-4 font-semibold ${stateClass}`}><span className="inline-flex items-center gap-1.5">{item.state === "parsing" && <Loader2 size={13} className="animate-spin" />}{stateLabel}</span>{item.message && <p className="mt-1 max-w-[260px] font-normal leading-5 text-white/40">{item.message}</p>}</td>
+                              <td className="px-4 py-4">
+                                {parsed ? <div className="grid gap-2 sm:grid-cols-2">
+                                  <input aria-label={`${item.file.name} name`} value={parsed.name || ""} onChange={(event) => updateUploadField(item.id, "name", event.target.value)} placeholder="Full name" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50" />
+                                  <input aria-label={`${item.file.name} email`} value={parsed.email || ""} onChange={(event) => updateUploadField(item.id, "email", event.target.value)} placeholder="Email (required)" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50" />
+                                  <input aria-label={`${item.file.name} phone`} value={parsed.phone || ""} onChange={(event) => updateUploadField(item.id, "phone", event.target.value)} placeholder="Phone" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50" />
+                                  <input aria-label={`${item.file.name} location`} value={parsed.location || ""} onChange={(event) => updateUploadField(item.id, "location", event.target.value)} placeholder="Location" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50" />
+                                  <input aria-label={`${item.file.name} skills`} value={parsed.skills.join(", ")} onChange={(event) => updateUploadField(item.id, "skills", event.target.value)} placeholder="Skills, comma separated" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50 sm:col-span-2" />
+                                </div> : <span className="text-white/25">Review available after parsing.</span>}
+                              </td>
+                              <td className="px-4 py-4"><div className="flex flex-wrap gap-2">{(item.state === "failed" || item.state === "unsupported") && <button type="button" onClick={() => void retryUpload(item)} className="rounded-lg border border-white/10 px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.08]">Retry</button>}{item.state !== "skipped" && item.state !== "parsed" && <button type="button" onClick={() => skipUpload(item.id)} className="rounded-lg border border-white/10 px-2.5 py-1.5 text-[11px] text-white/50 hover:bg-white/[0.08]">Skip</button>}{item.state === "parsed" && <button type="button" onClick={() => skipUpload(item.id)} className="rounded-lg border border-white/10 px-2.5 py-1.5 text-[11px] text-white/50 hover:bg-white/[0.08]">Skip</button>}</div></td>
+                            </tr>;
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 px-5 py-4 sm:px-7">
+                  <p className="text-xs text-white/40">{uploadItems.filter((item) => item.state === "parsed").length} ready to import · No candidate is created until confirmation.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => void uploadAndParseResumes()} disabled={!uploadItems.some((item) => item.state === "ready" || item.state === "failed" || item.state === "unsupported") || processingUploads || confirmingImports} className="inline-flex items-center gap-2 rounded-xl border border-purple-300/25 bg-purple-300/10 px-4 py-2.5 text-sm font-semibold text-purple-100 hover:bg-purple-300/20 disabled:opacity-40">{processingUploads && <Loader2 size={15} className="animate-spin" />}Start Parsing</button>
+                    <button type="button" onClick={() => void confirmImports()} disabled={!uploadItems.some((item) => item.state === "parsed") || processingUploads || confirmingImports} className="inline-flex items-center gap-2 rounded-xl bg-purple-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-purple-400 disabled:opacity-40">{confirmingImports && <Loader2 size={15} className="animate-spin" />}Confirm Import</button>
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
 
           {(notesPanelOpen || historyPanelOpen) && (
             <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm" onClick={() => { setNotesPanelOpen(false); setHistoryPanelOpen(false); }}>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   BriefcaseBusiness,
   Users,
@@ -38,19 +39,6 @@ type Application = {
   applied_at: string | null;
   recruiter_id?: string | null;
   job_candidate_number?: number | null;
-};
-
-type CandidateSummary = {
-  ID: string;
-  candidate_id: string | null;
-  first_name: string | null;
-  last_name: string | null;
-};
-
-type RecruiterSummary = {
-  id: string;
-  full_name: string | null;
-  email: string | null;
 };
 
 type DateRange =
@@ -214,11 +202,6 @@ export default function RecruiterDashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applications, setApplications] =
     useState<Application[]>([]);
-  const [candidateSummaries, setCandidateSummaries] =
-    useState<CandidateSummary[]>([]);
-  const [recruiterSummaries, setRecruiterSummaries] =
-    useState<RecruiterSummary[]>([]);
-
   const [candidateCount, setCandidateCount] =
     useState(0);
 
@@ -360,25 +343,11 @@ export default function RecruiterDashboard() {
         );
       }
 
-      const candidatesData =
-        (candidatesRequest.data || []) as CandidateSummary[];
+      const candidatesData = candidatesRequest.data || [];
 
       setCandidateCount(
         candidatesData.length
       );
-      setCandidateSummaries(candidatesData);
-
-      const recruitersRequest = await supabase
-        .from("profiles")
-        .select("id,full_name,email")
-        .in("role", ["owner", "admin", "recruiter"])
-        .eq("status", "active");
-
-      if (!recruitersRequest.error) {
-        setRecruiterSummaries(
-          (recruitersRequest.data || []) as RecruiterSummary[]
-        );
-      }
 
       setJobs(jobsData);
       setApplications(
@@ -557,40 +526,6 @@ export default function RecruiterDashboard() {
           application.status
         ) === "started"
     ).length;
-
-  const recentApplications =
-    recruiterApplications.slice(0, 6);
-
-  const recentJobs = recruiterJobs.slice(0, 5);
-
-  const candidateById = useMemo(
-    () => new Map(candidateSummaries.map((candidate) => [candidate.ID, candidate])),
-    [candidateSummaries]
-  );
-
-  const recruiterById = useMemo(
-    () => new Map(recruiterSummaries.map((recruiter) => [recruiter.id, recruiter])),
-    [recruiterSummaries]
-  );
-
-  function formatDate(
-    value: string | null
-  ) {
-    if (!value) {
-      return "—";
-    }
-
-    return new Date(
-      value
-    ).toLocaleDateString(
-      undefined,
-      {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      }
-    );
-  }
 
   return (
     <main className="min-h-screen bg-[#03040a] text-white">
@@ -903,7 +838,7 @@ export default function RecruiterDashboard() {
 
                 <DashboardStatLink
                   href="/recruiter/offers"
-                  label="Offers"
+                  label="Offer"
                   value={
                     pipelineCounts.offer
                   }
@@ -961,13 +896,13 @@ export default function RecruiterDashboard() {
                   </p>
                 </div>
 
-                <a
+                <Link
                   href="/recruiter/recruiters"
                   className="inline-flex w-fit items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/50 transition hover:bg-white/[0.07] hover:text-white"
                 >
                   <UserRound size={14} />
                   View Recruiters
-                </a>
+                </Link>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -1017,7 +952,7 @@ export default function RecruiterDashboard() {
                   href="/recruiter/recruiters"
                   label="Offers"
                   value={recruiterOffers}
-                  description="Your offers"
+                  description="Your offer count"
                   icon={
                     <FileText size={18} />
                   }
@@ -1026,9 +961,9 @@ export default function RecruiterDashboard() {
 
                 <DashboardStatLink
                   href="/recruiter/recruiters"
-                  label="Starts"
+                  label="Start"
                   value={recruiterStarts}
-                  description="Your starts"
+                  description="Your start count"
                   icon={
                     <CheckCircle2
                       size={18}
@@ -1036,161 +971,6 @@ export default function RecruiterDashboard() {
                   }
                   accent="green"
                 />
-              </div>
-            </section>
-
-            <section className="mt-8 grid gap-6 lg:grid-cols-[1.5fr_1fr]">
-              <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.025]">
-                <div className="flex items-center justify-between border-b border-white/10 px-6 py-5">
-                  <div>
-                    <h2 className="text-lg font-semibold">
-                      Recent Submissions
-                    </h2>
-
-                    <p className="mt-1 text-xs text-white/35">
-                      Recent candidate activity
-                    </p>
-                  </div>
-
-                  <a
-                    href="/recruiter/submissions"
-                    className="text-xs font-medium text-purple-200 hover:text-white"
-                  >
-                    View all →
-                  </a>
-                </div>
-
-                {recentApplications.length ===
-                0 ? (
-                  <EmptyState text="No candidate activity yet." />
-                ) : (
-                  <div className="divide-y divide-white/[0.06]">
-                    {recentApplications.map(
-                      (application) => (
-                        (() => {
-                          const candidate = candidateById.get(application.candidate_id);
-                          const recruiter = application.recruiter_id
-                            ? recruiterById.get(application.recruiter_id)
-                            : null;
-                          return (
-                        <div
-                          key={
-                            application.id
-                          }
-                          className="flex items-center justify-between gap-4 px-6 py-4 transition hover:bg-white/[0.025]"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium">
-                              {candidate
-                                ? `${candidate.first_name || ""} ${candidate.last_name || ""}`.trim()
-                                : "Unknown Candidate"}
-                            </p>
-
-                            <p className="mt-1 text-xs text-white/35">
-                              {candidate?.candidate_id || "No candidate X-number"}
-                              {application.job_candidate_number
-                                ? ` · JC-${String(application.job_candidate_number).padStart(3, "0")}`
-                                : ""}
-                              {recruiter
-                                ? ` · ${recruiter.full_name || recruiter.email || "Assigned recruiter"}`
-                                : " · Unassigned"}
-                              {" · Applied "}
-                              {formatDate(
-                                application.applied_at
-                              )}
-                            </p>
-                          </div>
-
-                          <span className="shrink-0 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-medium text-white/50">
-                            {application.status ||
-                              "New"}
-                          </span>
-                        </div>
-                          );
-                        })()
-                      )
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.025]">
-                <div className="flex items-center justify-between border-b border-white/10 px-6 py-5">
-                  <div>
-                    <h2 className="text-lg font-semibold">
-                      Recent Jobs
-                    </h2>
-
-                    <p className="mt-1 text-xs text-white/35">
-                      Latest openings
-                    </p>
-                  </div>
-
-                  <a
-                    href="/recruiter/jobs"
-                    className="text-xs font-medium text-purple-200 hover:text-white"
-                  >
-                    View all →
-                  </a>
-                </div>
-
-                {recentJobs.length ===
-                0 ? (
-                  <EmptyState text="No jobs created yet." />
-                ) : (
-                  <div className="divide-y divide-white/[0.06]">
-                    {recentJobs.map(
-                      (job) => (
-                        <a
-                          key={job.id}
-                          href={`/recruiter/jobs?job=${encodeURIComponent(job.id)}`}
-                          className="block px-6 py-4 transition hover:bg-white/[0.025]"
-                        >
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium">
-                                {job.title}
-                              </p>
-
-                              <p className="mt-1 truncate text-xs text-white/35">
-                                {job.company ||
-                                  "HireX"}
-
-                                {job.location
-                                  ? " • " +
-                                    job.location
-                                  : ""}
-                              </p>
-                            </div>
-
-                            <span className="shrink-0 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-medium text-white/50">
-                              {job.status ||
-                                "draft"}
-                            </span>
-                          </div>
-
-                          <div className="mt-3 flex items-center justify-between text-[11px] text-white/25">
-                            <span>
-                              {job.openings ||
-                                0}{" "}
-                              {job.openings ===
-                              1
-                                ? "opening"
-                                : "openings"}
-                            </span>
-
-                            <span>
-                              Created{" "}
-                              {formatDate(
-                                job.created_at
-                              )}
-                            </span>
-                          </div>
-                        </a>
-                      )
-                    )}
-                  </div>
-                )}
               </div>
             </section>
 
@@ -1229,13 +1009,13 @@ export default function RecruiterDashboard() {
                 />
 
                 <PipelineCard
-                  label="Offers"
+                  label="Offer"
                   value={pipelineCounts.offer}
                   href="/recruiter/offers"
                 />
 
                 <PipelineCard
-                  label="Starts"
+                  label="Start"
                   value={
                     pipelineCounts.started
                   }
@@ -1266,7 +1046,7 @@ export default function RecruiterDashboard() {
                     </p>
                   </div>
 
-                  <a
+                  <Link
                     href="/recruiter/clients"
                     className="inline-flex items-center gap-2 rounded-lg border border-purple-400/20 bg-purple-400/10 px-3 py-2 text-xs font-medium text-purple-200 hover:bg-purple-400/15"
                   >
@@ -1274,7 +1054,7 @@ export default function RecruiterDashboard() {
                     <ArrowRight
                       size={14}
                     />
-                  </a>
+                  </Link>
                 </div>
               </section>
             )}
@@ -1416,24 +1196,5 @@ function PipelineCard({
         {label}
       </p>
     </a>
-  );
-}
-
-function EmptyState({
-  text,
-}: {
-  text: string;
-}) {
-  return (
-    <div className="px-6 py-16 text-center">
-      <Users
-        size={28}
-        className="mx-auto text-white/15"
-      />
-
-      <p className="mt-4 text-sm text-white/40">
-        {text}
-      </p>
-    </div>
   );
 }

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Loader2, Save } from "lucide-react";
 import { supabase } from "../../../../../lib/supabase";
+import { JOB_STATUSES, formatJobStatus, normalizeJobStatus } from "../../../../../lib/statuses";
 
 type Job = {
   id: string;
@@ -17,7 +18,7 @@ type Job = {
   description: string;
   responsibilities: string[];
   qualifications: string[];
-  status: "draft" | "published" | "paused" | "closed";
+  status: (typeof JOB_STATUSES)[number];
   openings: number;
   salary: string | null;
   deadline: string | null;
@@ -46,7 +47,7 @@ export default function EditJobPage() {
   const [responsibilities, setResponsibilities] = useState("");
   const [qualifications, setQualifications] = useState("");
   const [status, setStatus] =
-    useState<Job["status"]>("draft");
+    useState<Job["status"]>("open");
   const [openings, setOpenings] = useState("1");
   const [salary, setSalary] = useState("");
   const [deadline, setDeadline] = useState("");
@@ -100,7 +101,7 @@ export default function EditJobPage() {
           : ""
       );
 
-      setStatus(loadedJob.status || "draft");
+      setStatus(normalizeJobStatus(loadedJob.status));
       setOpenings(String(loadedJob.openings ?? 1));
       setSalary(loadedJob.salary || "");
       setDeadline(
@@ -447,21 +448,11 @@ export default function EditJobPage() {
                 }
                 className="mt-2 w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-purple-300/40"
               >
-                <option value="draft">
-                  Draft
-                </option>
-
-                <option value="published">
-                  Published
-                </option>
-
-                <option value="paused">
-                  Paused
-                </option>
-
-                <option value="closed">
-                  Closed
-                </option>
+                {JOB_STATUSES.map((jobStatus) => (
+                  <option key={jobStatus} value={jobStatus}>
+                    {formatJobStatus(jobStatus)}
+                  </option>
+                ))}
               </select>
             </div>
 

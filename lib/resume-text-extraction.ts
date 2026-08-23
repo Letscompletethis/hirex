@@ -10,11 +10,45 @@ export async function extractResumeFile(file: File) {
   const name = file.name.toLowerCase();
   const isTextFile = file.type.startsWith("text/") || /\.(txt|md|rtf)$/.test(name);
 
+  if (file.type === "application/pdf" || name.endsWith(".pdf")) {
+    return extractPdfText(await file.arrayBuffer());
+  }
+
+  if (
+    file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    name.endsWith(".docx")
+  ) {
+    const mammoth = await import("mammoth/mammoth.browser");
+    const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+    return extractResumeText(result.value);
+  }
+
   if (!isTextFile) {
-    throw new Error("Unsupported format: this workspace can extract text files only. PDF, DOC, and DOCX parsing is not installed.");
+    throw new Error("Unsupported format: legacy DOC files are not supported. Use PDF, DOCX, or text.");
   }
 
   return extractResumeText(await file.text());
+}
+
+async function extractPdfText(data: ArrayBuffer) {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const document = await pdfjs.getDocument({
+    data: new Uint8Array(data),
+  }).promise;
+  const pages: string[] = [];
+
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    const page = await document.getPage(pageNumber);
+    const content = await page.getTextContent();
+    pages.push(
+      content.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .filter(Boolean)
+        .join(" ")
+    );
+  }
+
+  return extractResumeText(pages.join("\n"));
 }
 
 function labelledValue(lines: string[], labels: string[]) {
