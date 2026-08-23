@@ -20,6 +20,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
+import ThemeToggle from "../ThemeToggle";
 
 type NavItem = {
   label: string;
@@ -197,8 +198,10 @@ export default function RecruiterLayout({
   }, []);
 
   useEffect(() => {
-    setMenuOpen(false);
-    setAccountOpen(false);
+    void Promise.resolve().then(() => {
+      setMenuOpen(false);
+      setAccountOpen(false);
+    });
   }, [pathname]);
 
   async function handleLogout() {
@@ -280,6 +283,10 @@ export default function RecruiterLayout({
           </div>
 
           <div className="relative">
+
+            <div className="absolute right-full top-1/2 mr-2 -translate-y-1/2">
+              <ThemeToggle />
+            </div>
 
             <button
               type="button"

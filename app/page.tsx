@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import AnimatedBackground from "./AnimatedBackground";
+import ThemeToggle from "./ThemeToggle";
 
 export default function Home() {
   return (
@@ -65,12 +66,15 @@ export default function Home() {
             </nav>
 
             {/* RECRUITER LOGIN */}
-            <a
-              href="/recruiter/login"
-              className="rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm font-medium text-white/75 backdrop-blur-xl transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
-            >
-              Recruiter Login
-            </a>
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <a
+                href="/recruiter/login"
+                className="rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm font-medium text-white/75 backdrop-blur-xl transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
+              >
+                Recruiter Login
+              </a>
+            </div>
           </div>
         </header>
 
