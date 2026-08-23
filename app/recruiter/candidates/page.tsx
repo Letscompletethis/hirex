@@ -77,7 +77,7 @@ type CandidateApplication = {
 type UploadItem = {
   id: string;
   file: File;
-  state: "ready" | "parsing" | "parsed" | "duplicate" | "unsupported" | "failed" | "skipped";
+  state: "ready" | "parsing" | "parsed" | "duplicate" | "updated" | "unsupported" | "failed" | "skipped";
   parsed?: ParsedResume;
   message?: string;
   candidateId?: string;
@@ -477,9 +477,30 @@ export default function RecruiterCandidatesPage() {
           setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "failed", message: "Email is required before import." } : current));
           continue;
         }
-        const duplicateLookup = await supabase.from("candidates").select("candidate_id").ilike("email", email).limit(1);
+        const duplicateLookup = await supabase.from("candidates").select("ID,id,candidate_id").ilike("email", email).limit(1);
         if (duplicateLookup.error) throw new Error(duplicateLookup.error.message);
-        if (knownEmails.has(email) || duplicateLookup.data?.length) {
+        const existingCandidate = duplicateLookup.data?.[0] as { ID?: string; id?: string; candidate_id?: string } | undefined;
+        if (existingCandidate) {
+          const existingId = existingCandidate.ID || existingCandidate.id || "";
+          if (!existingId) throw new Error("Existing candidate has no database ID.");
+          const resumePath = `${existingCandidate.candidate_id || existingId}/${Date.now()}-${crypto.randomUUID()}-${item.file.name}`;
+          const upload = await supabase.storage.from("resumes").upload(resumePath, item.file, { contentType: item.file.type || "application/octet-stream", upsert: false });
+          if (upload.error) throw new Error(`Resume upload failed: ${upload.error.message}`);
+          const candidateNumber = existingCandidate.candidate_id || await allocateCandidateNumber(supabase);
+          const versionUpdate = await supabase.from("candidate_resume_versions").update({ is_current: false }).eq("candidate_id", existingId).eq("is_current", true);
+          if (versionUpdate.error) throw new Error(versionUpdate.error.message);
+          const version = await supabase.from("candidate_resume_versions").insert({ candidate_id: existingId, file_name: item.file.name, storage_path: resumePath, mime_type: item.file.type || null, is_current: true }).select("id").single();
+          if (version.error) throw new Error(version.error.message);
+          const nameParts = (parsed.name || "").trim().split(/\s+/).filter(Boolean);
+          const updateValues = { candidate_id: candidateNumber, first_name: nameParts[0] || null, last_name: nameParts.slice(1).join(" ") || null, phone: parsed.phone, resume_path: resumePath };
+          let updated = await supabase.from("candidates").update(updateValues).eq("ID", existingId);
+          if (updated.error) updated = await supabase.from("candidates").update(updateValues).eq("id", existingId);
+          if (updated.error) throw new Error(updated.error.message);
+          knownEmails.add(email);
+          setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "updated", candidateId: candidateNumber, message: `Updated ${candidateNumber}; previous resume retained.` } : current));
+          continue;
+        }
+        if (knownEmails.has(email)) {
           knownEmails.add(email);
           setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "duplicate", message: `${email} already exists.` } : current));
           continue;
@@ -494,6 +515,8 @@ export default function RecruiterCandidatesPage() {
           await supabase.storage.from("resumes").remove([resumePath]);
           throw new Error(created.error.message);
         }
+        const version = await supabase.from("candidate_resume_versions").insert({ candidate_id: String((created.data as Candidate).ID || (created.data as Candidate).id || candidateId), file_name: item.file.name, storage_path: resumePath, mime_type: item.file.type || null, is_current: true });
+        if (version.error) throw new Error(version.error.message);
         knownEmails.add(email);
         createdCount += 1;
         setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, candidateId, message: `Created ${candidateId}.` } : current));
@@ -2008,8 +2031,8 @@ export default function RecruiterCandidatesPage() {
                         <tbody className="divide-y divide-white/10">
                           {uploadItems.map((item) => {
                             const parsed = item.parsed;
-                            const stateLabel = item.state === "ready" ? "Ready" : item.state === "parsing" ? "Parsing" : item.state === "parsed" ? "Parsed" : item.state === "unsupported" ? "Unsupported" : item.state === "failed" ? "Failed" : item.state === "duplicate" ? "Duplicate" : "Skipped";
-                            const stateClass = item.state === "parsed" ? "text-green-300" : item.state === "duplicate" ? "text-yellow-300" : item.state === "unsupported" || item.state === "failed" ? "text-red-300" : "text-white/55";
+                            const stateLabel = item.state === "ready" ? "Ready" : item.state === "parsing" ? "Parsing" : item.state === "parsed" ? "Parsed" : item.state === "unsupported" ? "Unsupported" : item.state === "failed" ? "Failed" : item.state === "duplicate" ? "Duplicate" : item.state === "updated" ? "Updated" : "Skipped";
+                            const stateClass = item.state === "parsed" || item.state === "updated" ? "text-green-300" : item.state === "duplicate" ? "text-yellow-300" : item.state === "unsupported" || item.state === "failed" ? "text-red-300" : "text-white/55";
                             return <tr key={item.id} className="align-top">
                               <td className="max-w-[220px] px-4 py-4"><p className="truncate font-medium text-white/80">{item.file.name}</p><p className="mt-1 text-white/30">{Math.ceil(item.file.size / 1024)} KB</p></td>
                               <td className={`px-4 py-4 font-semibold ${stateClass}`}><span className="inline-flex items-center gap-1.5">{item.state === "parsing" && <Loader2 size={13} className="animate-spin" />}{stateLabel}</span>{item.message && <p className="mt-1 max-w-[260px] font-normal leading-5 text-white/40">{item.message}</p>}</td>

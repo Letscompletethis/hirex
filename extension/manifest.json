@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "HireX LinkedIn Import",
+  "version": "0.1.0",
+  "description": "Send profile information you explicitly enter or select to HireX.",
+  "action": { "default_popup": "popup.html" },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["storage"]
+}

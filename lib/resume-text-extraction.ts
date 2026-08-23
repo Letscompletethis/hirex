@@ -27,7 +27,9 @@ export async function extractResumeFile(file: File) {
     throw new Error("Unsupported format: legacy DOC files are not supported. Use PDF, DOCX, or text.");
   }
 
-  return extractResumeText(await file.text());
+  const text = await file.text();
+  if (!text.trim()) throw new Error("Resume file is empty.");
+  return extractResumeText(text);
 }
 
 async function extractPdfText(data: ArrayBuffer) {
@@ -48,7 +50,9 @@ async function extractPdfText(data: ArrayBuffer) {
     );
   }
 
-  return extractResumeText(pages.join("\n"));
+  const text = pages.join("\n");
+  if (!text.trim()) throw new Error("Resume contains no extractable text.");
+  return extractResumeText(text);
 }
 
 function labelledValue(lines: string[], labels: string[]) {
@@ -58,6 +62,8 @@ function labelledValue(lines: string[], labels: string[]) {
 }
 
 export function extractResumeText(text: string): ParsedResume {
+  if (!text.trim()) throw new Error("Resume text is empty.");
+
   const lines = text
     .replace(/\r/g, "")
     .split("\n")
@@ -74,9 +80,14 @@ export function extractResumeText(text: string): ParsedResume {
         .filter((skill) => skill.length > 1 && skill.length < 50)
         .slice(0, 20)
     : [];
+  const firstLine = lines[0] || "";
+  const inferredName =
+    firstLine.length >= 2 && firstLine.length <= 80 && !firstLine.includes(":") && !firstLine.includes("@")
+      ? firstLine
+      : null;
 
   return {
-    name: labelledValue(lines, ["name", "full name"]),
+    name: labelledValue(lines, ["name", "full name"]) || inferredName,
     email,
     phone,
     location: labelledValue(lines, ["location", "address", "city"]),

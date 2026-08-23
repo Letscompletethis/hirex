@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   BriefcaseBusiness,
   Users,
-  UserPlus,
   CalendarDays,
   CheckCircle2,
   XCircle,
@@ -18,6 +17,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
+import { normalizeApplicationStatus } from "../../lib/statuses";
 
 type Job = {
   id: string;
@@ -159,43 +159,6 @@ function normalizeJobStatus(status: string | null) {
   }
 
   return value || "draft";
-}
-
-function normalizeApplicationStatus(
-  status: string | null
-) {
-  const value = (status || "").toLowerCase().trim();
-
-  if (
-    value === "submitted" ||
-    value === "submission"
-  ) {
-    return "submission";
-  }
-
-  if (
-    value === "interview" ||
-    value === "interviewing"
-  ) {
-    return "interview";
-  }
-
-  if (
-    value === "offer" ||
-    value === "offered"
-  ) {
-    return "offer";
-  }
-
-  if (
-    value === "hired" ||
-    value === "started" ||
-    value === "start"
-  ) {
-    return "started";
-  }
-
-  return value || "new";
 }
 
 export default function RecruiterDashboard() {
@@ -462,9 +425,6 @@ export default function RecruiterDashboard() {
   const pipelineCounts =
     useMemo(() => {
       return {
-        new: recruiterApplications.filter(
-          (application) => normalizeApplicationStatus(application.status) === "new"
-        ).length,
         submission: recruiterApplications.filter(
           (application) => normalizeApplicationStatus(application.status) === "submission"
         ).length,
@@ -474,8 +434,8 @@ export default function RecruiterDashboard() {
         offer: recruiterApplications.filter(
           (application) => normalizeApplicationStatus(application.status) === "offer"
         ).length,
-        started: recruiterApplications.filter(
-          (application) => normalizeApplicationStatus(application.status) === "started"
+        start: recruiterApplications.filter(
+          (application) => normalizeApplicationStatus(application.status) === "start"
         ).length,
         rejected: recruiterApplications.filter(
           (application) => normalizeApplicationStatus(application.status) === "rejected"
@@ -524,7 +484,7 @@ export default function RecruiterDashboard() {
       (application) =>
         normalizeApplicationStatus(
           application.status
-        ) === "started"
+        ) === "start"
     ).length;
 
   return (
@@ -794,19 +754,6 @@ export default function RecruiterDashboard() {
                 />
 
                 <DashboardStatLink
-                  href="/recruiter/candidates?status=new"
-                  label="New"
-                  value={pipelineCounts.new}
-                  description="New candidates"
-                  icon={
-                    <UserPlus
-                      size={20}
-                    />
-                  }
-                  accent="purple"
-                />
-
-                <DashboardStatLink
                   href="/recruiter/submissions"
                   label="Submissions"
                   value={
@@ -842,7 +789,7 @@ export default function RecruiterDashboard() {
                   value={
                     pipelineCounts.offer
                   }
-                  description="Offers received"
+                  description="Offer received"
                   icon={
                     <FileText
                       size={20}
@@ -853,11 +800,11 @@ export default function RecruiterDashboard() {
 
                 <DashboardStatLink
                   href="/recruiter/starts"
-                  label="Starts"
+                  label="Start"
                   value={
-                    pipelineCounts.started
+                    pipelineCounts.start
                   }
-                  description="Candidates started"
+                  description="Candidate starts"
                   icon={
                     <CheckCircle2
                       size={20}
@@ -950,7 +897,7 @@ export default function RecruiterDashboard() {
 
                 <DashboardStatLink
                   href="/recruiter/recruiters"
-                  label="Offers"
+                  label="Offer"
                   value={recruiterOffers}
                   description="Your offer count"
                   icon={
@@ -985,13 +932,7 @@ export default function RecruiterDashboard() {
                 </p>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-                <PipelineCard
-                  label="New"
-                  value={pipelineCounts.new}
-                  href="/recruiter/candidates"
-                />
-
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <PipelineCard
                   label="Submissions"
                   value={
@@ -1017,7 +958,7 @@ export default function RecruiterDashboard() {
                 <PipelineCard
                   label="Start"
                   value={
-                    pipelineCounts.started
+                    pipelineCounts.start
                   }
                   href="/recruiter/starts"
                 />

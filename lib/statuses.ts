@@ -48,6 +48,10 @@ export function normalizeApplicationStatus(
   return "submission";
 }
 
+export function normalizeStatus(value: string | null | undefined): ApplicationStatus {
+  return normalizeApplicationStatus(value);
+}
+
 export function formatJobStatus(value: string | null | undefined) {
   const labels: Record<JobStatus, string> = {
     open: "Open",
