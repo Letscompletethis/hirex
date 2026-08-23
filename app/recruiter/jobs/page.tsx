@@ -1323,6 +1323,28 @@ function RecruiterJobsContent() {
     return !query || `${recruiter.full_name || ""} ${recruiter.email || ""}`.toLowerCase().includes(query);
   });
 
+  function getJobRecruiterLabel(job: Job) {
+    const recruiterIds = Array.from(
+      new Set(
+        applications
+          .filter((application) => applicationMatchesJob(application, job))
+          .map((application) => application.recruiter_id)
+          .filter(Boolean)
+      )
+    ) as string[];
+
+    if (recruiterIds.length === 0) {
+      return "Unassigned";
+    }
+
+    const names = recruiterIds.map((recruiterId) => {
+      const recruiter = recruiters.find((item) => item.id === recruiterId);
+      return recruiter?.full_name || recruiter?.email || recruiterId;
+    });
+
+    return names.join(", ");
+  }
+
   /*
    * =========================================================
    * JOB CANDIDATE COUNTS
@@ -2733,6 +2755,10 @@ function RecruiterJobsContent() {
                     </th>
 
                     <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/30">
+                      Recruiter
+                    </th>
+
+                    <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/30">
                       Candidates
                     </th>
 
@@ -2836,6 +2862,14 @@ function RecruiterJobsContent() {
                               )}
                             </span>
 
+                          </td>
+
+                          {/* RECRUITER */}
+
+                          <td className="max-w-[220px] px-3 py-3 text-sm text-white/60">
+                            <span className="block truncate" title={getJobRecruiterLabel(job)}>
+                              {getJobRecruiterLabel(job)}
+                            </span>
                           </td>
 
                           {/* CANDIDATES */}

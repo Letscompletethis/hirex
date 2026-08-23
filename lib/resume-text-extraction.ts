@@ -6,6 +6,17 @@ export type ParsedResume = {
   skills: string[];
 };
 
+export async function extractResumeFile(file: File) {
+  const name = file.name.toLowerCase();
+  const isTextFile = file.type.startsWith("text/") || /\.(txt|md|rtf)$/.test(name);
+
+  if (!isTextFile) {
+    throw new Error("Unsupported format: this workspace can extract text files only. PDF, DOC, and DOCX parsing is not installed.");
+  }
+
+  return extractResumeText(await file.text());
+}
+
 function labelledValue(lines: string[], labels: string[]) {
   const pattern = new RegExp(`^(?:${labels.join("|")})\\s*[:\\-]\\s*(.+)$`, "i");
   const line = lines.find((item) => pattern.test(item));
