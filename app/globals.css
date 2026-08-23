@@ -44,6 +44,10 @@ html.light-mode [class*="bg-black"] {
   background-color: var(--theme-surface) !important;
 }
 
+html.light-mode [class*="bg-black/"] {
+  background-color: rgba(255, 255, 255, 0.88) !important;
+}
+
 html.light-mode [class*="bg-white/[0.025]"],
 html.light-mode [class*="bg-white/[0.03]"],
 html.light-mode [class*="bg-white/[0.04]"],
@@ -69,6 +73,78 @@ html.light-mode [class*="text-transparent"] {
 
 html.light-mode [class*="border-white"] {
   border-color: var(--theme-border) !important;
+}
+
+html.light-mode [class*="text-gray-900"] {
+  color: #20242b !important;
+}
+
+html.light-mode [class*="text-gray-700"],
+html.light-mode [class*="text-gray-600"],
+html.light-mode [class*="text-gray-500"],
+html.light-mode [class*="text-gray-400"] {
+  color: #596474 !important;
+}
+
+html.light-mode [class*="bg-gray-100"],
+html.light-mode [class*="bg-gray-50"] {
+  background-color: #eef1f5 !important;
+}
+
+html.light-mode [class*="border-black"] {
+  border-color: var(--theme-border) !important;
+}
+
+html.light-mode [class*="hover:bg-gray-"]:hover {
+  background-color: #eef1f5 !important;
+}
+
+html.light-mode [class*="text-purple-200"],
+html.light-mode [class*="text-purple-100"] {
+  color: #5b21b6 !important;
+}
+
+html.light-mode [class*="text-purple-300"] {
+  color: #6d28d9 !important;
+}
+
+html.light-mode [class*="text-green-300"],
+html.light-mode [class*="text-green-200"] {
+  color: #166534 !important;
+}
+
+html.light-mode [class*="text-yellow-300"],
+html.light-mode [class*="text-yellow-200"] {
+  color: #854d0e !important;
+}
+
+html.light-mode [class*="text-orange-300"],
+html.light-mode [class*="text-orange-200"] {
+  color: #9a3412 !important;
+}
+
+html.light-mode [class*="text-red-300"],
+html.light-mode [class*="text-red-200"] {
+  color: #b91c1c !important;
+}
+
+html.light-mode [class*="text-cyan-300"],
+html.light-mode [class*="text-cyan-200"] {
+  color: #155e75 !important;
+}
+
+html.light-mode [class*="text-blue-300"],
+html.light-mode [class*="text-blue-200"] {
+  color: #1d4ed8 !important;
+}
+
+html.light-mode [class*="bg-green-400/"],
+html.light-mode [class*="bg-yellow-400/"],
+html.light-mode [class*="bg-orange-400/"],
+html.light-mode [class*="bg-red-400/"],
+html.light-mode [class*="bg-cyan-400/"],
+html.light-mode [class*="bg-blue-400/"] {
+  background-color: color-mix(in srgb, currentColor 10%, white) !important;
 }
 
 html.light-mode [class*="placeholder:text-white"]::placeholder {

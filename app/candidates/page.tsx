@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import AnimatedBackground from "../AnimatedBackground";
+import ThemeToggle from "../ThemeToggle";
 
 export default function CandidatesPage() {
   return (
@@ -91,9 +92,11 @@ export default function CandidatesPage() {
               </Link>
             </nav>
 
-            <Link
-              href="/#contact"
-              className="
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <Link
+                href="/#contact"
+                className="
                 rounded-xl
                 bg-white
                 px-4
@@ -104,9 +107,10 @@ export default function CandidatesPage() {
                 transition
                 hover:bg-white/90
               "
-            >
-              Talk to HireX
-            </Link>
+              >
+                Talk to HireX
+              </Link>
+            </div>
           </div>
         </header>
 

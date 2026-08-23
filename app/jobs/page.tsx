@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { normalizeJobStatus } from "../../lib/statuses";
+import ThemeToggle from "../ThemeToggle";
 
 type Job = {
   id: string;
@@ -65,6 +66,10 @@ export default function PublicJobsPage() {
   return (
     <main className="min-h-screen bg-[#03040a] text-white">
       <div className="mx-auto max-w-7xl px-5 py-10 sm:px-8">
+
+        <div className="mb-6 flex justify-end">
+          <ThemeToggle />
+        </div>
 
         {/* Back to Website */}
         <Link
