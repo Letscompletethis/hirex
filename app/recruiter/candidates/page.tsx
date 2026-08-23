@@ -59,13 +59,13 @@ type Job = {
 const PAGE_SIZE = 100;
 
 const STATUS_OPTIONS = [
-  "new",
-  "viewed",
-  "submissions",
+  "submission",
   "interview",
   "offer",
-  "hired",
+  "start",
   "rejected",
+  "withdrawn",
+  "hold",
 ];
 
 export default function RecruiterCandidatesPage() {
@@ -102,6 +102,8 @@ export default function RecruiterCandidatesPage() {
 
   const [resumeUrl, setResumeUrl] = useState("");
   const [noteText, setNoteText] = useState("");
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingNoteText, setEditingNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
 
   async function loadCandidates() {
@@ -649,6 +651,37 @@ export default function RecruiterCandidatesPage() {
     }
   }
 
+  async function saveEditedNote(candidate: Candidate) {
+    if (!editingNoteId || !editingNoteText.trim()) return;
+
+    const candidateId = getCandidateDbId(candidate);
+    const notes = parseCandidateNotes(candidate.notes);
+    const updatedNotes = notes.map((note) => note.id === editingNoteId
+      ? { ...note, text: editingNoteText.trim(), editedAt: new Date().toISOString() }
+      : note
+    );
+
+    setSavingNote(true);
+    setError("");
+    const result = await supabase
+      .from("candidates")
+      .update({ notes: serializeCandidateNotes(updatedNotes) })
+      .eq("ID", candidateId);
+
+    if (result.error) {
+      setError(result.error.message);
+    } else {
+      setCandidates((current) => current.map((item) =>
+        getCandidateDbId(item) === candidateId
+          ? { ...item, notes: serializeCandidateNotes(updatedNotes) }
+          : item
+      ));
+      setEditingNoteId(null);
+      setEditingNoteText("");
+    }
+    setSavingNote(false);
+  }
+
   function goToPreviousCandidate() {
     if (
       selectedCandidateIndex === null ||
@@ -1147,16 +1180,6 @@ export default function RecruiterCandidatesPage() {
                       </th>
 
                       <SortableHeader
-                        label="Assigned Job"
-                        column="job_title"
-                        sortColumn={sortColumn}
-                        sortDirection={
-                          sortDirection
-                        }
-                        onSort={handleSort}
-                      />
-
-                      <SortableHeader
                         label="Status"
                         column="status"
                         sortColumn={sortColumn}
@@ -1293,27 +1316,6 @@ export default function RecruiterCandidatesPage() {
                                     "—"}
                                 </p>
                               </div>
-                            </td>
-
-                            <td className="px-4 py-4">
-                              {candidate.job_title ? (
-                                <div className="flex max-w-[220px] items-center gap-2">
-                                  <BriefcaseBusiness
-                                    size={14}
-                                    className="shrink-0 text-blue-300/60"
-                                  />
-
-                                  <span className="truncate text-xs text-white/55">
-                                    {
-                                      candidate.job_title
-                                    }
-                                  </span>
-                                </div>
-                              ) : (
-                                <span className="text-xs text-white/20">
-                                  Unassigned
-                                </span>
-                              )}
                             </td>
 
                             <td className="px-4 py-4">
@@ -1695,15 +1697,62 @@ export default function RecruiterCandidatesPage() {
                               key={note.id}
                               className="rounded-xl border border-white/10 bg-black/20 p-3"
                             >
-                              <p className="whitespace-pre-wrap text-sm text-white/75">
-                                {note.text}
-                              </p>
+                              {editingNoteId === note.id ? (
+                                <textarea
+                                  value={editingNoteText}
+                                  onChange={(event) => setEditingNoteText(event.target.value)}
+                                  rows={3}
+                                  className="w-full resize-none rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-purple-400/40"
+                                />
+                              ) : (
+                                <p className="whitespace-pre-wrap text-sm text-white/75">
+                                  {note.text}
+                                </p>
+                              )}
                               <p className="mt-2 text-[11px] text-white/30">
                                 {note.author}
                                 {note.createdAt
                                   ? ` · ${new Date(note.createdAt).toLocaleString()}`
                                   : ""}
+                                {note.editedAt
+                                  ? ` · Edited ${new Date(note.editedAt).toLocaleString()}`
+                                  : ""}
                               </p>
+                              <div className="mt-2 flex gap-2">
+                                {editingNoteId === note.id ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      disabled={savingNote || !editingNoteText.trim()}
+                                      onClick={() => saveEditedNote(selectedCandidate)}
+                                      className="rounded-md bg-white px-2 py-1 text-[11px] font-semibold text-black disabled:opacity-40"
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingNoteId(null);
+                                        setEditingNoteText("");
+                                      }}
+                                      className="rounded-md border border-white/10 px-2 py-1 text-[11px] text-white/60"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingNoteId(note.id);
+                                      setEditingNoteText(note.text);
+                                    }}
+                                    className="text-[11px] text-purple-200/70 hover:text-purple-100"
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           )
                         )}

@@ -3,6 +3,7 @@ export type CandidateNote = {
   text: string;
   author: string;
   createdAt: string;
+  editedAt?: string;
 };
 
 const NOTES_PREFIX = "HIREX_NOTES_V1:";

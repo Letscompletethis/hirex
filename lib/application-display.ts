@@ -8,6 +8,8 @@ export type ApplicationSummary = {
   job_candidate_number: number | null;
 };
 
+import { formatApplicationStatus as formatCanonicalApplicationStatus } from "./statuses";
+
 export function formatJobCandidateNumber(
   value: number | null | undefined
 ) {
@@ -19,17 +21,5 @@ export function formatJobCandidateNumber(
 export function formatApplicationStatus(
   value: string | null | undefined
 ) {
-  const normalized = (value || "new").toLowerCase().trim();
-  const labels: Record<string, string> = {
-    submitted: "Submission",
-    submission: "Submission",
-    interviewing: "Interview",
-    offered: "Offer",
-    started: "Started",
-    start: "Started",
-    hired: "Started",
-  };
-
-  return labels[normalized] ||
-    normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  return formatCanonicalApplicationStatus(value);
 }

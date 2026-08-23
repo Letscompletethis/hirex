@@ -6,17 +6,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   Plus,
   Search,
-  ChevronDown,
   ArrowLeft,
   BriefcaseBusiness,
   Users,
   FileText,
   Loader2,
   X,
-  Play,
-  Pause,
-  XCircle,
-  Pencil,
   ExternalLink,
   ChevronLeft,
   ChevronRight,
@@ -30,6 +25,11 @@ import {
 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 import { allocateJobCandidateNumber } from "../../../lib/job-candidate-number";
+import {
+  formatJobStatus,
+  JOB_STATUSES,
+  normalizeJobStatus as normalizeCanonicalJobStatus,
+} from "../../../lib/statuses";
 
 type Job = {
   id: string;
@@ -111,20 +111,6 @@ function normalizeStatus(status: string | null | undefined) {
   return (status || "new").toLowerCase().trim();
 }
 
-function normalizeJobStatus(status: string | null | undefined) {
-  const value = normalizeStatus(status);
-
-  if (["published", "open", "active"].includes(value)) {
-    return "published";
-  }
-
-  if (["paused", "hold", "on hold"].includes(value)) {
-    return "paused";
-  }
-
-  return value;
-}
-
 function applicationMatchesCandidate(
   application: Application,
   candidate: Candidate
@@ -195,17 +181,16 @@ function RecruiterJobsContent() {
   const [statusFilter, setStatusFilter] =
     useState("all");
 
-  const [openAction, setOpenAction] =
-    useState<string | null>(null);
-
   const [updatingCandidateStatus, setUpdatingCandidateStatus] =
     useState(false);
   const [assigningRecruiter, setAssigningRecruiter] =
     useState(false);
   const [selectedRecruiterId, setSelectedRecruiterId] =
     useState("");
-  const [jobRecruiterSelections, setJobRecruiterSelections] =
-    useState<Record<string, string>>({});
+  const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
+  const [bulkRecruiterSearch, setBulkRecruiterSearch] = useState("");
+  const [bulkRecruiterId, setBulkRecruiterId] = useState("");
+  const [bulkStatus, setBulkStatus] = useState("");
 
   /*
    * =========================================================
@@ -400,61 +385,62 @@ function RecruiterJobsContent() {
     setAssigningRecruiter(false);
   }
 
-  function getJobRecruiterSelection(job: Job) {
-    const assignedRecruiters = Array.from(
-      new Set(
-        applications
-          .filter((application) => applicationMatchesJob(application, job))
-          .map((application) => application.recruiter_id)
-          .filter(Boolean)
-      )
-    ) as string[];
+  async function assignRecruiterToSelectedJobs() {
+    if (!bulkRecruiterId || selectedJobIds.length === 0) return;
 
-    return (
-      jobRecruiterSelections[job.id] ||
-      (assignedRecruiters.length === 1 ? assignedRecruiters[0] : "")
-    );
-  }
-
-  async function assignRecruiterFromJobRow(job: Job) {
-    const recruiterId = getJobRecruiterSelection(job);
     const applicationIds = applications
-      .filter((application) => applicationMatchesJob(application, job))
+      .filter((application) => selectedJobIds.some((jobId) =>
+        application.job_id === jobId || application.job_id === jobs.find((job) => job.id === jobId)?.job_id
+      ))
       .map((application) => application.id)
       .filter(Boolean) as string[];
 
-    if (!recruiterId || applicationIds.length === 0) {
-      setError(
-        applicationIds.length === 0
-          ? "This job has no applications to assign yet."
-          : "Select a recruiter first."
-      );
+    if (applicationIds.length === 0) {
+      setError("Selected jobs have no applications to assign yet.");
       return;
     }
 
     setAssigningRecruiter(true);
     setError("");
-    setSuccess("");
-
     const { error: updateError } = await supabase
       .from("applications")
-      .update({ recruiter_id: recruiterId })
+      .update({ recruiter_id: bulkRecruiterId })
       .in("id", applicationIds);
 
     if (updateError) {
       setError(updateError.message);
     } else {
-      setApplications((current) =>
-        current.map((application) =>
-          applicationIds.includes(application.id || "")
-            ? { ...application, recruiter_id: recruiterId }
-            : application
-        )
-      );
-      setSuccess(`${job.title || "Job"} recruiter assignment saved.`);
+      setApplications((current) => current.map((application) =>
+        applicationIds.includes(application.id || "")
+          ? { ...application, recruiter_id: bulkRecruiterId }
+          : application
+      ));
+      setSuccess(`${selectedJobIds.length} jobs updated.`);
+      setSelectedJobIds([]);
+      setBulkRecruiterId("");
+    }
+    setAssigningRecruiter(false);
+  }
+
+  async function updateSelectedJobStatuses() {
+    if (!bulkStatus || selectedJobIds.length === 0) return;
+
+    const { error: updateError } = await supabase
+      .from("jobs")
+      .update({ status: bulkStatus, updated_at: new Date().toISOString() })
+      .in("id", selectedJobIds);
+
+    if (updateError) {
+      setError(updateError.message);
+      return;
     }
 
-    setAssigningRecruiter(false);
+    setJobs((current) => current.map((job) =>
+      selectedJobIds.includes(job.id) ? { ...job, status: bulkStatus } : job
+    ));
+    setSuccess(`${selectedJobIds.length} jobs changed to ${formatJobStatus(bulkStatus)}.`);
+    setSelectedJobIds([]);
+    setBulkStatus("");
   }
 
   /*
@@ -607,8 +593,6 @@ function RecruiterJobsContent() {
    */
 
   function openJob(jobId: string) {
-    setOpenAction(null);
-
     router.push(
       `/recruiter/jobs?job=${encodeURIComponent(
         jobId
@@ -1139,56 +1123,6 @@ function RecruiterJobsContent() {
 
   /*
    * =========================================================
-   * UPDATE JOB STATUS
-   * =========================================================
-   */
-
-  async function updateJobStatus(
-    id: string,
-    status: string
-  ) {
-    setError("");
-    setSuccess("");
-
-    const { error: updateError } =
-      await supabase
-        .from("jobs")
-        .update({
-          status,
-          updated_at:
-            new Date().toISOString(),
-        })
-        .eq("id", id);
-
-    if (updateError) {
-      setError(
-        updateError.message
-      );
-      return;
-    }
-
-    setJobs((current) =>
-      current.map((job) =>
-        job.id === id
-          ? {
-              ...job,
-              status,
-            }
-          : job
-      )
-    );
-
-    setSuccess(
-      `Job status changed to ${formatStatus(
-        status
-      )}.`
-    );
-
-    setOpenAction(null);
-  }
-
-  /*
-   * =========================================================
    * JOB FILTERING
    * =========================================================
    */
@@ -1207,9 +1141,9 @@ function RecruiterJobsContent() {
 
       const requestedJobStatus =
         requestedStatus === "active"
-          ? "published"
+          ? "open"
           : requestedStatus === "hold"
-            ? "paused"
+            ? "hold"
             : requestedStatus;
       const effectiveStatusFilter =
         statusFilter !== "all"
@@ -1218,7 +1152,7 @@ function RecruiterJobsContent() {
 
       if (
         effectiveStatusFilter !== "all" &&
-        normalizeJobStatus(job.status) !== effectiveStatusFilter
+        normalizeCanonicalJobStatus(job.status) !== effectiveStatusFilter
       ) {
         return false;
       }
@@ -1246,6 +1180,25 @@ function RecruiterJobsContent() {
     statusFilter,
     requestedStatus,
   ]);
+
+  function toggleJobSelection(jobId: string) {
+    setSelectedJobIds((current) => current.includes(jobId)
+      ? current.filter((id) => id !== jobId)
+      : [...current, jobId]);
+  }
+
+  function toggleAllJobs() {
+    const visibleIds = filteredJobs.map((job) => job.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedJobIds.includes(id));
+    setSelectedJobIds(allSelected
+      ? selectedJobIds.filter((id) => !visibleIds.includes(id))
+      : Array.from(new Set([...selectedJobIds, ...visibleIds])));
+  }
+
+  const filteredRecruiters = recruiters.filter((recruiter) => {
+    const query = bulkRecruiterSearch.toLowerCase().trim();
+    return !query || `${recruiter.full_name || ""} ${recruiter.email || ""}`.toLowerCase().includes(query);
+  });
 
   /*
    * =========================================================
@@ -1317,9 +1270,12 @@ function RecruiterJobsContent() {
    * =========================================================
    */
 
-  function formatStatus(
-    status: string | null | undefined
-  ) {
+  function formatStatus(status: string | null | undefined) {
+    const jobValue = (status || "").toLowerCase().trim();
+    if (["published", "active", "open", "paused", "on hold", "hold", "closed", "close", "filled", "hired"].includes(jobValue)) {
+      return formatJobStatus(status);
+    }
+
     const value =
       normalizeStatus(status);
 
@@ -1339,13 +1295,11 @@ function RecruiterJobsContent() {
   function statusClass(
     status: string | null
   ) {
-    switch (
-      normalizeStatus(status)
-    ) {
-      case "published":
+    switch (normalizeCanonicalJobStatus(status)) {
+      case "open":
         return "border-green-400/20 bg-green-400/10 text-green-300";
 
-      case "paused":
+      case "hold":
         return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
 
       case "closed":
@@ -2388,21 +2342,11 @@ function RecruiterJobsContent() {
                 All Statuses
               </option>
 
-              <option value="published">
-                Published
-              </option>
-
-              <option value="draft">
-                Draft
-              </option>
-
-              <option value="paused">
-                Paused
-              </option>
-
-              <option value="closed">
-                Closed
-              </option>
+              {JOB_STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {formatJobStatus(status)}
+                </option>
+              ))}
             </select>
 
             <button
@@ -2424,6 +2368,67 @@ function RecruiterJobsContent() {
           </div>
 
         </section>
+
+        {selectedJobIds.length > 0 && (
+          <section className="mb-4 flex flex-col gap-3 rounded-xl border border-purple-400/20 bg-purple-400/[0.05] p-3 lg:flex-row lg:items-center">
+            <span className="text-sm font-semibold text-purple-100">
+              {selectedJobIds.length} jobs selected
+            </span>
+            <div className="flex flex-1 flex-col gap-2 sm:flex-row">
+              <input
+                value={bulkRecruiterSearch}
+                onChange={(event) => setBulkRecruiterSearch(event.target.value)}
+                placeholder="Search recruiter name or email"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-white/10 bg-black/20 px-3 text-xs text-white outline-none placeholder:text-white/25 focus:border-purple-400/40"
+              />
+              <select
+                value={bulkRecruiterId}
+                onChange={(event) => setBulkRecruiterId(event.target.value)}
+                className="h-9 min-w-[190px] rounded-lg border border-white/10 bg-[#090a11] px-3 text-xs text-white outline-none"
+              >
+                <option value="">Assign recruiter...</option>
+                {filteredRecruiters.map((recruiter) => (
+                  <option key={recruiter.id} value={recruiter.id}>
+                    {recruiter.full_name || recruiter.email || recruiter.id}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={assignRecruiterToSelectedJobs}
+                disabled={assigningRecruiter || !bulkRecruiterId}
+                className="h-9 rounded-lg bg-white px-3 text-xs font-semibold text-black disabled:opacity-40"
+              >
+                {assigningRecruiter ? "Assigning..." : "Assign Recruiter"}
+              </button>
+              <select
+                value={bulkStatus}
+                onChange={(event) => setBulkStatus(event.target.value)}
+                className="h-9 min-w-[130px] rounded-lg border border-white/10 bg-[#090a11] px-3 text-xs text-white outline-none"
+              >
+                <option value="">Change status...</option>
+                {JOB_STATUSES.map((status) => (
+                  <option key={status} value={status}>{formatJobStatus(status)}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={updateSelectedJobStatuses}
+                disabled={!bulkStatus}
+                className="h-9 rounded-lg border border-white/10 px-3 text-xs text-white/70 disabled:opacity-40"
+              >
+                Change Status
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedJobIds([])}
+                className="h-9 rounded-lg border border-white/10 px-3 text-xs text-white/60"
+              >
+                Clear Selection
+              </button>
+            </div>
+          </section>
+        )}
 
         {/* JOB TABLE */}
 
@@ -2463,7 +2468,16 @@ function RecruiterJobsContent() {
                 <thead>
                   <tr className="border-b border-white/10 bg-white/[0.025] text-left">
 
-                    <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/30">
+                    <th className="w-10 px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={filteredJobs.length > 0 && filteredJobs.every((job) => selectedJobIds.includes(job.id))}
+                        onChange={toggleAllJobs}
+                        aria-label="Select all visible jobs"
+                      />
+                    </th>
+
+                    <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wider text-white/30">
                       Job ID
                     </th>
 
@@ -2495,10 +2509,6 @@ function RecruiterJobsContent() {
                       Created
                     </th>
 
-                    <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/30">
-                      Actions
-                    </th>
-
                   </tr>
                 </thead>
 
@@ -2506,7 +2516,6 @@ function RecruiterJobsContent() {
 
                   {filteredJobs.map(
                     (job) => {
-                      const jobStatus = normalizeJobStatus(job.status);
                       const count =
                         getJobCandidatesCount(
                           job
@@ -2520,7 +2529,16 @@ function RecruiterJobsContent() {
 
                           {/* JOB ID */}
 
-                          <td className="px-5 py-5">
+                          <td className="px-3 py-3" onClick={(event) => event.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={selectedJobIds.includes(job.id)}
+                              onChange={() => toggleJobSelection(job.id)}
+                              aria-label={`Select ${job.title || job.job_id || "job"}`}
+                            />
+                          </td>
+
+                          <td className="px-3 py-3">
                             <span className="font-mono text-xs text-purple-200/80">
                               {job.job_id ||
                                 "—"}
@@ -2529,7 +2547,7 @@ function RecruiterJobsContent() {
 
                           {/* POSITION */}
 
-                          <td className="px-5 py-5">
+                          <td className="px-3 py-3">
 
                             <button
                               type="button"
@@ -2554,28 +2572,28 @@ function RecruiterJobsContent() {
 
                           {/* CLIENT */}
 
-                          <td className="px-5 py-5 text-sm text-white/65">
+                          <td className="px-3 py-3 text-sm text-white/65">
                             {job.company ||
                               "—"}
                           </td>
 
                           {/* LOCATION */}
 
-                          <td className="px-5 py-5 text-sm text-white/55">
+                          <td className="px-3 py-3 text-sm text-white/55">
                             {job.location ||
                               "—"}
                           </td>
 
                           {/* TYPE */}
 
-                          <td className="px-5 py-5 text-sm text-white/55">
+                          <td className="px-3 py-3 text-sm text-white/55">
                             {job.type ||
                               "—"}
                           </td>
 
                           {/* STATUS */}
 
-                          <td className="px-5 py-5">
+                          <td className="px-3 py-3">
 
                             <span
                               className={`inline-flex rounded-full border px-3 py-1 text-xs capitalize ${statusClass(
@@ -2591,7 +2609,7 @@ function RecruiterJobsContent() {
 
                           {/* CANDIDATES */}
 
-                          <td className="px-5 py-5">
+                          <td className="px-3 py-3">
 
                             <button
                               type="button"
@@ -2613,209 +2631,12 @@ function RecruiterJobsContent() {
 
                           {/* CREATED */}
 
-                          <td className="px-5 py-5 text-xs text-white/40">
+                          <td className="px-3 py-3 text-xs text-white/40">
                             {job.created_at
                               ? new Date(
                                   job.created_at
                                 ).toLocaleDateString()
                               : "—"}
-                          </td>
-
-                          {/* ACTIONS */}
-
-                          <td className="relative px-5 py-5">
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setOpenAction(
-                                  openAction ===
-                                    job.id
-                                    ? null
-                                    : job.id
-                                )
-                              }
-                              className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-white/65 hover:bg-white/[0.08] hover:text-white"
-                            >
-                              Actions
-
-                              <ChevronDown
-                                size={15}
-                              />
-                            </button>
-
-                            {openAction ===
-                              job.id && (
-                              <div className="absolute right-5 top-[65px] z-50 w-56 overflow-hidden rounded-xl border border-white/10 bg-[#0b0c13] shadow-2xl">
-
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    openJob(
-                                      job.id
-                                    )
-                                  }
-                                  className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-white/70 hover:bg-white/[0.06] hover:text-white"
-                                >
-                                  <Users
-                                    size={15}
-                                  />
-                                  View Candidates
-                                </button>
-
-                                <Link
-                                  href={`/recruiter/jobs/${job.id}/edit`}
-                                  onClick={() =>
-                                    setOpenAction(
-                                      null
-                                    )
-                                  }
-                                  className="flex items-center gap-3 px-4 py-3 text-sm text-white/70 hover:bg-white/[0.06] hover:text-white"
-                                >
-                                  <Pencil
-                                    size={15}
-                                  />
-                                  Edit Job
-                                </Link>
-
-                                <Link
-                                  href={`/jobs/${job.id}`}
-                                  target="_blank"
-                                  onClick={() =>
-                                    setOpenAction(
-                                      null
-                                    )
-                                  }
-                                  className="flex items-center gap-3 px-4 py-3 text-sm text-white/70 hover:bg-white/[0.06] hover:text-white"
-                                >
-                                  <ExternalLink
-                                    size={15}
-                                  />
-                                  View Public Job
-                                </Link>
-
-                                {jobStatus ===
-                                  "active" && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      updateJobStatus(
-                                        job.id,
-                                        "paused"
-                                      )
-                                    }
-                                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-yellow-300/80 hover:bg-yellow-400/[0.06]"
-                                  >
-                                    <Pause
-                                      size={15}
-                                    />
-                                    Pause Job
-                                  </button>
-                                )}
-
-                                {(jobStatus ===
-                                  "hold" ||
-                                  jobStatus ===
-                                    "draft") && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      updateJobStatus(
-                                        job.id,
-                                        "published"
-                                      )
-                                    }
-                                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-green-300/80 hover:bg-green-400/[0.06]"
-                                  >
-                                    <Play
-                                      size={15}
-                                    />
-                                    Publish Job
-                                  </button>
-                                )}
-
-                                {jobStatus ===
-                                  "closed" && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      updateJobStatus(
-                                        job.id,
-                                        "published"
-                                      )
-                                    }
-                                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-green-300/80 hover:bg-green-400/[0.06]"
-                                  >
-                                    <Play
-                                      size={15}
-                                    />
-                                    Reopen Job
-                                  </button>
-                                )}
-
-                                {jobStatus !==
-                                  "closed" && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      updateJobStatus(
-                                        job.id,
-                                        "closed"
-                                      )
-                                    }
-                                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-red-300/80 hover:bg-red-400/[0.06]"
-                                  >
-                                    <XCircle
-                                      size={15}
-                                    />
-                                    Close Job
-                                  </button>
-                                )}
-
-                              </div>
-                            )}
-
-                            <div className="mt-3 flex min-w-[280px] flex-col gap-2">
-                              <label className="text-[10px] font-semibold uppercase tracking-wider text-white/30">
-                                Assigned Recruiter
-                              </label>
-                              <select
-                                aria-label={`Assigned recruiter for ${job.title || job.job_id || "job"}`}
-                                value={getJobRecruiterSelection(job)}
-                                onChange={(event) =>
-                                  setJobRecruiterSelections((current) => ({
-                                    ...current,
-                                    [job.id]: event.target.value,
-                                  }))
-                                }
-                                className="h-10 rounded-lg border border-white/10 bg-black/20 px-3 text-xs text-white outline-none focus:border-purple-400/40"
-                              >
-                                <option value="" className="bg-[#0b0c13] text-white">
-                                  Select recruiter
-                                </option>
-                                {recruiters.map((recruiter) => (
-                                  <option
-                                    key={recruiter.id}
-                                    value={recruiter.id}
-                                    className="bg-[#0b0c13] text-white"
-                                  >
-                                    {recruiter.full_name || recruiter.email || recruiter.id}
-                                  </option>
-                                ))}
-                              </select>
-                              <button
-                                type="button"
-                                disabled={
-                                  assigningRecruiter ||
-                                  !getJobRecruiterSelection(job)
-                                }
-                                onClick={() => assignRecruiterFromJobRow(job)}
-                                className="h-10 rounded-lg bg-white px-3 text-xs font-semibold text-black hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
-                              >
-                                {assigningRecruiter ? "Saving..." : "Save Assignment"}
-                              </button>
-                            </div>
-
                           </td>
 
                         </tr>
