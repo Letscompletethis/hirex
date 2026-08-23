@@ -35,6 +35,7 @@ import {
 import {
   APPLICATION_STATUSES,
   formatApplicationStatus,
+  normalizeApplicationStatus,
 } from "../../../lib/statuses";
 import { extractResumeFile, type ParsedResume } from "../../../lib/resume-text-extraction";
 
@@ -217,6 +218,17 @@ export default function RecruiterCandidatesPage() {
     void Promise.resolve().then(loadCandidates);
   }, []);
 
+  useEffect(() => {
+    const channel = supabase
+      .channel("recruiter-candidates-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "candidates" }, () => void loadCandidates())
+      .on("postgres_changes", { event: "*", schema: "public", table: "applications" }, () => void loadCandidates())
+      .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, () => void loadCandidates())
+      .subscribe();
+
+    return () => { void supabase.removeChannel(channel); };
+  }, []);
+
   function getCandidateDbId(candidate: Candidate) {
     return candidate.ID || candidate.id || "";
   }
@@ -229,8 +241,9 @@ export default function RecruiterCandidatesPage() {
     const result = candidates.filter((candidate) => {
       if (
         statusFilter !== "all" &&
-        (candidate.status || "new").toLowerCase() !==
-          statusFilter.toLowerCase()
+        (APPLICATION_STATUSES.includes(statusFilter as typeof APPLICATION_STATUSES[number])
+          ? normalizeApplicationStatus(candidate.status) !== statusFilter
+          : (candidate.status || "new").toLowerCase() !== statusFilter.toLowerCase())
       ) {
         return false;
       }
@@ -565,6 +578,17 @@ export default function RecruiterCandidatesPage() {
         .update({ status: bulkStatus })
         .in("candidate_id", selectedIds);
       if (updateError) throw new Error(updateError.message);
+      let candidateUpdate = await supabase
+        .from("candidates")
+        .update({ status: bulkStatus })
+        .in("ID", selectedIds);
+      if (candidateUpdate.error) {
+        candidateUpdate = await supabase
+          .from("candidates")
+          .update({ status: bulkStatus })
+          .in("id", selectedIds);
+      }
+      if (candidateUpdate.error) throw new Error(candidateUpdate.error.message);
       setSuccess(`${selectedIds.length} candidate${selectedIds.length === 1 ? "" : "s"} moved to ${formatApplicationStatus(bulkStatus)}.`);
       setSelectedIds([]);
       setBulkStatus("");
@@ -751,6 +775,14 @@ export default function RecruiterCandidatesPage() {
         throw new Error(
           result.error.message
         );
+      }
+
+      if (newStatus !== "viewed" && newStatus !== "new") {
+        const applicationUpdate = await supabase
+          .from("applications")
+          .update({ status: newStatus })
+          .eq("candidate_id", candidateId);
+        if (applicationUpdate.error) throw new Error(applicationUpdate.error.message);
       }
 
       setCandidates((previous) =>
@@ -1003,6 +1035,10 @@ export default function RecruiterCandidatesPage() {
       status || "new"
     ).toLowerCase();
 
+    if (APPLICATION_STATUSES.includes(value as typeof APPLICATION_STATUSES[number]) || ["starts", "offers", "started", "offered", "hired"].includes(value)) {
+      return formatApplicationStatus(value);
+    }
+
     return value
       .charAt(0)
       .toUpperCase() +
@@ -1014,7 +1050,9 @@ export default function RecruiterCandidatesPage() {
       status || "new"
     ).toLowerCase();
 
-    if (value === "hired") {
+    const normalizedValue = normalizeApplicationStatus(value);
+
+    if (normalizedValue === "start") {
       return "border-green-400/20 bg-green-400/10 text-green-300";
     }
 
@@ -1022,7 +1060,7 @@ export default function RecruiterCandidatesPage() {
       return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
     }
 
-    if (value === "offer") {
+    if (normalizedValue === "offer") {
       return "border-orange-400/20 bg-orange-400/10 text-orange-300";
     }
 

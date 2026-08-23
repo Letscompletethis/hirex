@@ -17,7 +17,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
-import { normalizeApplicationStatus } from "../../lib/statuses";
+import { normalizeApplicationStatus as normalizeSharedApplicationStatus } from "../../lib/statuses";
 
 type Job = {
   id: string;
@@ -336,6 +336,17 @@ export default function RecruiterDashboard() {
     void Promise.resolve().then(loadDashboard);
   }, []);
 
+  useEffect(() => {
+    const channel = supabase
+      .channel("recruiter-dashboard-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "applications" }, () => void loadDashboard())
+      .on("postgres_changes", { event: "*", schema: "public", table: "candidates" }, () => void loadDashboard())
+      .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, () => void loadDashboard())
+      .subscribe();
+
+    return () => { void supabase.removeChannel(channel); };
+  }, []);
+
   const filteredApplications =
     useMemo(() => {
       return applications.filter(
@@ -426,19 +437,19 @@ export default function RecruiterDashboard() {
     useMemo(() => {
       return {
         submission: recruiterApplications.filter(
-          (application) => normalizeApplicationStatus(application.status) === "submission"
+          (application) => normalizeSharedApplicationStatus(application.status) === "submission"
         ).length,
         interview: recruiterApplications.filter(
-          (application) => normalizeApplicationStatus(application.status) === "interview"
+          (application) => normalizeSharedApplicationStatus(application.status) === "interview"
         ).length,
         offer: recruiterApplications.filter(
-          (application) => normalizeApplicationStatus(application.status) === "offer"
+          (application) => normalizeSharedApplicationStatus(application.status) === "offer"
         ).length,
         start: recruiterApplications.filter(
-          (application) => normalizeApplicationStatus(application.status) === "start"
+          (application) => normalizeSharedApplicationStatus(application.status) === "start"
         ).length,
         rejected: recruiterApplications.filter(
-          (application) => normalizeApplicationStatus(application.status) === "rejected"
+          (application) => normalizeSharedApplicationStatus(application.status) === "rejected"
         ).length,
       };
     }, [recruiterApplications]);
@@ -458,7 +469,7 @@ export default function RecruiterDashboard() {
   const recruiterSubmissions =
     recruiterApplications.filter(
       (application) =>
-        normalizeApplicationStatus(
+        normalizeSharedApplicationStatus(
           application.status
         ) === "submission"
     ).length;
@@ -466,7 +477,7 @@ export default function RecruiterDashboard() {
   const recruiterInterviews =
     recruiterApplications.filter(
       (application) =>
-        normalizeApplicationStatus(
+        normalizeSharedApplicationStatus(
           application.status
         ) === "interview"
     ).length;
@@ -474,7 +485,7 @@ export default function RecruiterDashboard() {
   const recruiterOffers =
     recruiterApplications.filter(
       (application) =>
-        normalizeApplicationStatus(
+        normalizeSharedApplicationStatus(
           application.status
         ) === "offer"
     ).length;
@@ -482,7 +493,7 @@ export default function RecruiterDashboard() {
   const recruiterStarts =
     recruiterApplications.filter(
       (application) =>
-        normalizeApplicationStatus(
+        normalizeSharedApplicationStatus(
           application.status
         ) === "start"
     ).length;

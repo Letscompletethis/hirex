@@ -49,24 +49,34 @@ export default function RecruiterActivityPage({ status }: { status: ApplicationS
   const [draftFrom, setDraftFrom] = useState("");
   const [draftTo, setDraftTo] = useState("");
 
+  async function loadActivity() {
+    setLoading(true); setError("");
+    const scope = await getRecruiterApplicationScope(supabase);
+    if (scope === "") { setItems([]); setLoading(false); return; }
+    let request = supabase.from("applications").select("id,candidate_id,job_id,status,applied_at,recruiter_id,job_candidate_number").order("applied_at", { ascending: false });
+    if (scope) request = request.eq("recruiter_id", scope);
+    const [{ data, error: applicationsError }, { data: recruiterData }] = await Promise.all([
+      request,
+      scope === null ? supabase.from("profiles").select("id,full_name,email").in("role", ["owner", "admin", "recruiter"]).eq("status", "active") : Promise.resolve({ data: [] as Recruiter[] }),
+    ]);
+    if (applicationsError) setError(applicationsError.message);
+    setItems((data || []) as ApplicationSummary[]);
+    setRecruiters((recruiterData || []) as Recruiter[]);
+    setLoading(false);
+  }
+
   useEffect(() => {
-    async function load() {
-      setLoading(true); setError("");
-      const scope = await getRecruiterApplicationScope(supabase);
-      if (scope === "") { setItems([]); setLoading(false); return; }
-      let request = supabase.from("applications").select("id,candidate_id,job_id,status,applied_at,recruiter_id,job_candidate_number").order("applied_at", { ascending: false });
-      if (scope) request = request.eq("recruiter_id", scope);
-      const [{ data, error: applicationsError }, { data: recruiterData }] = await Promise.all([
-        request,
-        scope === null ? supabase.from("profiles").select("id,full_name,email").in("role", ["owner", "admin", "recruiter"]).eq("status", "active") : Promise.resolve({ data: [] as Recruiter[] }),
-      ]);
-      if (applicationsError) setError(applicationsError.message);
-      setItems((data || []) as ApplicationSummary[]);
-      setRecruiters((recruiterData || []) as Recruiter[]);
-      setLoading(false);
-    }
-    void load();
+    void Promise.resolve().then(loadActivity);
   }, []);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`recruiter-activity-${status}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "applications" }, () => void loadActivity())
+      .subscribe();
+
+    return () => { void supabase.removeChannel(channel); };
+  }, [status]);
 
   const filtered = useMemo(() => items.filter((item) => {
     const haystack = `${item.candidate_id || ""} ${item.job_id || ""} ${item.job_candidate_number || ""}`.toLowerCase();

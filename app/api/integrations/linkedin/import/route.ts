@@ -5,6 +5,12 @@ import { extractResumeText } from "../../../../../lib/resume-text-extraction";
 
 export const runtime = "nodejs";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 type ImportProfile = {
   firstName?: string;
   lastName?: string;
@@ -52,8 +58,8 @@ export async function POST(request: NextRequest) {
     const parsedResume = profile.resumeText?.trim() ? extractResumeText(profile.resumeText) : null;
     const resolvedEmail = email || parsedResume?.email || "";
     const resolvedPhone = phone || parsedResume?.phone || null;
-    if (body.source !== "user-selected") return NextResponse.json({ error: "Only user-selected, user-provided profile information can be imported." }, { status: 400 });
-    if (!resolvedEmail && !linkedinProfileUrl && !resolvedPhone) return NextResponse.json({ error: "Email, LinkedIn profile URL, or phone is required to match or create a candidate." }, { status: 400 });
+    if (body.source !== "user-selected") return NextResponse.json({ error: "Only user-selected, user-provided profile information can be imported." }, { status: 400, headers: corsHeaders });
+    if (!resolvedEmail && !linkedinProfileUrl && !resolvedPhone) return NextResponse.json({ error: "Email, LinkedIn profile URL, or phone is required to match or create a candidate." }, { status: 400, headers: corsHeaders });
 
     const admin = getAdminClient();
     let existing: Record<string, unknown> | undefined;
@@ -89,16 +95,20 @@ export async function POST(request: NextRequest) {
       let result = await admin.from("candidates").update(updateValues).eq("ID", databaseId).select("*").single();
       if (result.error) result = await admin.from("candidates").update(updateValues).eq("id", databaseId).select("*").single();
       if (result.error) throw new Error(result.error.message);
-      return NextResponse.json({ candidate: result.data, created: false, resumeParsed: Boolean(parsedResume), persistence: "Existing candidate updated; external profile data is matched by stored LinkedIn URL when available." });
+      return NextResponse.json({ candidate: result.data, created: false, resumeParsed: Boolean(parsedResume), persistence: "Existing candidate updated; external profile data is matched by stored LinkedIn URL when available." }, { headers: corsHeaders });
     }
 
     const candidateId = await allocateCandidateNumber(admin);
     const { data: candidate, error: insertError } = await admin.from("candidates").insert({ candidate_id: candidateId, ...values, status: "new" }).select("*").single();
     if (insertError) throw new Error(insertError.message);
-    return NextResponse.json({ candidate, created: true, resumeParsed: Boolean(parsedResume), persistence: "Candidate created with the existing schema; user-provided LinkedIn URL is stored for future matching." }, { status: 201 });
+    return NextResponse.json({ candidate, created: true, resumeParsed: Boolean(parsedResume), persistence: "Candidate created with the existing schema; user-provided LinkedIn URL is stored for future matching." }, { status: 201, headers: corsHeaders });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to import candidate.";
     const status = message === "UNAUTHORIZED" ? 401 : message.startsWith("CONFIGURATION:") ? 503 : 500;
-    return NextResponse.json({ error: message.replace(/^CONFIGURATION: /, "") }, { status });
+    return NextResponse.json({ error: message.replace(/^CONFIGURATION: /, "") }, { status, headers: corsHeaders });
   }
+}
+
+export function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: corsHeaders });
 }
