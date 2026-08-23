@@ -46,6 +46,10 @@ export async function proxy(request: NextRequest) {
   const isPublicAuthPage =
     pathname === "/recruiter/login" ||
     pathname === "/recruiter/reset-password";
+  const isRecruiterManagementRoute =
+    pathname === "/recruiter/recruiters" ||
+    pathname.startsWith("/recruiter/recruiters/") ||
+    pathname === "/recruiter/users";
 
   // Protect recruiter pages
   if (isRecruiterRoute && !isPublicAuthPage && !user) {
@@ -70,6 +74,13 @@ export async function proxy(request: NextRequest) {
       role
     );
     const isActive = !status || status === "active";
+
+    if (isRecruiterManagementRoute && !["owner", "admin", "super_admin"].includes(role)) {
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = "/recruiter";
+      loginUrl.searchParams.set("error", "forbidden");
+      return NextResponse.redirect(loginUrl);
+    }
 
     if (profileError || !profile || !isRecruiter || !isActive) {
       const loginUrl = request.nextUrl.clone();

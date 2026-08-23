@@ -1,15 +1,9 @@
-"use client";
+import RecruiterActivityPage from "../activity/page";
 
-import { useEffect, useState } from "react";
-import { supabase } from "../../../lib/supabase";
-import {
-  type ApplicationSummary,
-  formatApplicationStatus,
-  formatJobCandidateNumber,
-} from "../../../lib/application-display";
-import { getRecruiterApplicationScope } from "../../../lib/recruiter-scope";
 
 export default function SubmissionsPage() {
+  return <RecruiterActivityPage status="submission" />;
+/*
   const [applications, setApplications] = useState<ApplicationSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -85,4 +79,5 @@ export default function SubmissionsPage() {
       )}
     </div>
   );
+*/
 }

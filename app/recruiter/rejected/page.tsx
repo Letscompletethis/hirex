@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import RecruiterActivityPage from "../activity/page";
+/* import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 import {
   type ApplicationSummary,
   formatJobCandidateNumber,
 } from "../../../lib/application-display";
-import { getRecruiterApplicationScope } from "../../../lib/recruiter-scope";
+import { getRecruiterApplicationScope } from "../../../lib/recruiter-scope"; */
 
 export default function RejectedPage() {
+  return <RecruiterActivityPage status="rejected" />;
+/*
   const [items, setItems] = useState<ApplicationSummary[]>([]);
 
   useEffect(() => {
@@ -62,4 +65,5 @@ export default function RejectedPage() {
       </div>
     </div>
   );
+*/
 }

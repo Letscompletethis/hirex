@@ -1,0 +1,40 @@
+export type ParsedResume = {
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  location: string | null;
+  skills: string[];
+};
+
+function labelledValue(lines: string[], labels: string[]) {
+  const pattern = new RegExp(`^(?:${labels.join("|")})\\s*[:\\-]\\s*(.+)$`, "i");
+  const line = lines.find((item) => pattern.test(item));
+  return line?.match(pattern)?.[1]?.trim() || null;
+}
+
+export function extractResumeText(text: string): ParsedResume {
+  const lines = text
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.replace(/^\s*[-*\u2022]\s*/, "").trim())
+    .filter(Boolean);
+  const content = lines.join(" ");
+  const email = content.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || null;
+  const phone = content.match(/(?:\+?\d[\d\s().-]{7,}\d)/)?.[0]?.trim() || null;
+  const skillsValue = labelledValue(lines, ["skills", "technical skills", "core skills"]);
+  const skills = skillsValue
+    ? skillsValue
+        .split(/[,;|]/)
+        .map((skill) => skill.trim())
+        .filter((skill) => skill.length > 1 && skill.length < 50)
+        .slice(0, 20)
+    : [];
+
+  return {
+    name: labelledValue(lines, ["name", "full name"]),
+    email,
+    phone,
+    location: labelledValue(lines, ["location", "address", "city"]),
+    skills,
+  };
+}

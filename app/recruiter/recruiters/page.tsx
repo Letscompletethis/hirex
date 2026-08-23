@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
+import { normalizeApplicationStatus } from "../../../lib/statuses";
 
 type Recruiter = {
   id: string;
@@ -114,9 +116,9 @@ export default function RecruitersPage() {
                 >
                   <div className="flex flex-wrap items-center justify-between gap-4">
                     <div>
-                      <p className="font-semibold text-white">
+                      <Link href={`/recruiter/recruiters/${recruiter.id}`} className="font-semibold text-white hover:underline">
                         {recruiter.full_name || "Unnamed recruiter"}
-                      </p>
+                      </Link>
                       <p className="mt-1 text-sm text-white/45">
                         {recruiter.email || "No email"}
                       </p>
@@ -132,9 +134,9 @@ export default function RecruitersPage() {
                   </div>
                   <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <Stat label="Assigned" value={assigned.length} />
-                    <Stat label="Submissions" value={assigned.filter((item) => ["submission", "submitted"].includes(String(item.status).toLowerCase())).length} />
-                    <Stat label="Interviews" value={assigned.filter((item) => ["interview", "interviewing"].includes(String(item.status).toLowerCase())).length} />
-                    <Stat label="Offers" value={assigned.filter((item) => ["offer", "offered"].includes(String(item.status).toLowerCase())).length} />
+                    <Stat label="Submissions" value={assigned.filter((item) => normalizeApplicationStatus(item.status) === "submission").length} />
+                    <Stat label="Interviews" value={assigned.filter((item) => normalizeApplicationStatus(item.status) === "interview").length} />
+                    <Stat label="Offers" value={assigned.filter((item) => normalizeApplicationStatus(item.status) === "offer").length} />
                   </div>
                 </div>
               );

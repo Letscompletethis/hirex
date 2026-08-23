@@ -28,6 +28,7 @@ import { allocateJobCandidateNumber } from "../../../lib/job-candidate-number";
 import {
   formatJobStatus,
   JOB_STATUSES,
+  normalizeApplicationStatus,
   normalizeJobStatus as normalizeCanonicalJobStatus,
 } from "../../../lib/statuses";
 
@@ -200,6 +201,10 @@ function RecruiterJobsContent() {
   const [bulkRecruiterSearch, setBulkRecruiterSearch] = useState("");
   const [bulkRecruiterId, setBulkRecruiterId] = useState("");
   const [bulkStatus, setBulkStatus] = useState("");
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
+  const [transferJobSearch, setTransferJobSearch] = useState("");
+  const [transferJobId, setTransferJobId] = useState("");
+  const [transferringCandidates, setTransferringCandidates] = useState(false);
 
   /*
    * =========================================================
@@ -825,6 +830,72 @@ function RecruiterJobsContent() {
     candidate: Candidate
   ) {
     return candidate.id || candidate.ID || null;
+  }
+
+  function toggleCandidateSelection(candidate: Candidate) {
+    const candidateId = getCandidateId(candidate);
+    if (!candidateId) return;
+    setSelectedCandidateIds((current) => current.includes(candidateId)
+      ? current.filter((id) => id !== candidateId)
+      : [...current, candidateId]);
+  }
+
+  function toggleAllJobCandidates() {
+    const visibleIds = jobCandidates.map(getCandidateId).filter(Boolean);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedCandidateIds.includes(id));
+    setSelectedCandidateIds(allSelected
+      ? selectedCandidateIds.filter((id) => !visibleIds.includes(id))
+      : Array.from(new Set([...selectedCandidateIds, ...visibleIds])));
+  }
+
+  async function transferSelectedCandidates() {
+    if (!selectedJob || !transferJobId || selectedCandidateIds.length === 0) return;
+    const destinationJob = jobs.find((job) => job.id === transferJobId);
+    if (!destinationJob || destinationJob.id === selectedJob.id) {
+      setError("Choose a different destination job.");
+      return;
+    }
+
+    if (!window.confirm(`Transfer ${selectedCandidateIds.length} candidate${selectedCandidateIds.length === 1 ? "" : "s"} to ${destinationJob.title}?`)) return;
+
+    setTransferringCandidates(true);
+    setError("");
+    setSuccess("");
+    try {
+      let transferred = 0;
+      for (const candidateId of selectedCandidateIds) {
+        const existing = await supabase
+          .from("applications")
+          .select("id")
+          .eq("candidate_id", candidateId)
+          .eq("job_id", destinationJob.id)
+          .limit(1);
+        if (existing.error) throw new Error(existing.error.message);
+        if ((existing.data || []).length > 0) continue;
+
+        const sourceCandidate = jobCandidates.find((candidate) => getCandidateId(candidate) === candidateId);
+        const databaseCandidateId = sourceCandidate ? candidateIdForDatabase(sourceCandidate) : candidateId;
+        if (!databaseCandidateId) continue;
+        const jobCandidateNumber = await allocateJobCandidateNumber(supabase, destinationJob.id);
+        const inserted = await supabase.from("applications").insert({
+          candidate_id: databaseCandidateId,
+          job_id: destinationJob.id,
+          status: normalizeApplicationStatus(getCandidateApplication(sourceCandidate!, selectedJob)?.status || "submission"),
+          job_candidate_number: jobCandidateNumber,
+        });
+        if (inserted.error) throw new Error(inserted.error.message);
+        transferred += 1;
+      }
+      setSuccess(`${transferred} candidate${transferred === 1 ? "" : "s"} transferred to ${destinationJob.title}.`);
+      setSelectedCandidateIds([]);
+      setTransferJobId("");
+      setTransferJobSearch("");
+      await loadCandidateData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not transfer candidates.");
+    } finally {
+      setTransferringCandidates(false);
+    }
   }
 
   /*
@@ -2054,6 +2125,48 @@ function RecruiterJobsContent() {
 
           </div>
 
+          {selectedCandidateIds.length > 0 && (
+            <section className="mb-5 flex flex-col gap-3 rounded-xl border border-purple-400/20 bg-purple-400/[0.05] p-3 lg:flex-row lg:items-center">
+              <span className="text-sm font-semibold text-purple-100">
+                {selectedCandidateIds.length} candidate{selectedCandidateIds.length === 1 ? "" : "s"} selected
+              </span>
+              <div className="flex flex-1 flex-col gap-2 sm:flex-row">
+                <input
+                  value={transferJobSearch}
+                  onChange={(event) => setTransferJobSearch(event.target.value)}
+                  placeholder="Search destination job..."
+                  className="h-9 min-w-0 flex-1 rounded-lg border border-white/10 bg-black/20 px-3 text-xs text-white outline-none placeholder:text-white/25 focus:border-purple-400/40"
+                />
+                <select
+                  value={transferJobId}
+                  onChange={(event) => setTransferJobId(event.target.value)}
+                  className="h-9 min-w-[220px] rounded-lg border border-white/10 bg-[#090a11] px-3 text-xs text-white outline-none"
+                >
+                  <option value="">Transfer to job...</option>
+                  {jobs
+                    .filter((job) => job.id !== selectedJob.id)
+                    .filter((job) => !transferJobSearch.trim() || `${job.title || ""} ${job.job_id || ""} ${job.company || ""}`.toLowerCase().includes(transferJobSearch.toLowerCase().trim()))
+                    .map((job) => <option key={job.id} value={job.id}>{job.title || job.job_id || "Untitled job"}</option>)}
+                </select>
+                <button
+                  type="button"
+                  onClick={transferSelectedCandidates}
+                  disabled={transferringCandidates || !transferJobId}
+                  className="h-9 rounded-lg bg-purple-500 px-3 text-xs font-semibold text-white disabled:opacity-40"
+                >
+                  {transferringCandidates ? "Transferring..." : "Transfer"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedCandidateIds([])}
+                  className="h-9 rounded-lg border border-white/10 px-3 text-xs text-white/60"
+                >
+                  Clear Selection
+                </button>
+              </div>
+            </section>
+          )}
+
           {/* CANDIDATE TABLE */}
 
           <section className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.025]">
@@ -2091,6 +2204,15 @@ function RecruiterJobsContent() {
 
                   <thead>
                     <tr className="border-b border-white/10 bg-white/[0.025] text-left">
+
+                      <th className="w-10 px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={jobCandidates.length > 0 && jobCandidates.every((candidate) => selectedCandidateIds.includes(getCandidateId(candidate)))}
+                          onChange={toggleAllJobCandidates}
+                          aria-label="Select all candidates in this job pool"
+                        />
+                      </th>
 
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wider text-white/30">
                         Candidate ID
@@ -2157,6 +2279,15 @@ function RecruiterJobsContent() {
                             }
                             className="cursor-pointer border-b border-white/[0.06] transition hover:bg-white/[0.035]"
                           >
+
+                            <td className="px-3 py-3" onClick={(event) => event.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={selectedCandidateIds.includes(id)}
+                                onChange={() => toggleCandidateSelection(candidate)}
+                                aria-label={`Select ${name}`}
+                              />
+                            </td>
 
                             <td className="px-5 py-5">
                               <span className="font-mono text-xs text-purple-200/80">

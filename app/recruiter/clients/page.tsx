@@ -211,7 +211,7 @@ export default function ClientsPage() {
   }
 
   useEffect(() => {
-    loadClients();
+    void Promise.resolve().then(loadClients);
   }, []);
 
   const filteredClients = useMemo(() => {

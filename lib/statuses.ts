@@ -42,7 +42,7 @@ export function normalizeApplicationStatus(
   if (["offer", "offered", "offers"].includes(status)) return "offer";
   if (["start", "started", "starts", "hired"].includes(status)) return "start";
   if (status === "rejected") return "rejected";
-  if (status === "withdrawn") return "withdrawn";
+  if (["withdrawn", "withdraw"].includes(status)) return "withdrawn";
   if (status === "hold") return "hold";
 
   return "submission";

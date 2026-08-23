@@ -1,9 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Plus, X } from "lucide-react";
+import { ArrowLeft, Check, Plus, X } from "lucide-react";
 import { supabase } from "../../../../lib/supabase";
+
+type Recruiter = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+};
 
 export default function NewJobPage() {
   const router = useRouter();
@@ -17,6 +23,10 @@ export default function NewJobPage() {
   const [openings, setOpenings] = useState("1");
   const [deadline, setDeadline] = useState("");
   const [description, setDescription] = useState("");
+  const [recruiters, setRecruiters] = useState<Recruiter[]>([]);
+  const [recruiterSearch, setRecruiterSearch] = useState("");
+  const [selectedRecruiterId, setSelectedRecruiterId] = useState("");
+  const [assignmentNotice, setAssignmentNotice] = useState("");
 
   const [responsibilities, setResponsibilities] = useState<string[]>([""]);
   const [qualifications, setQualifications] = useState<string[]>([""]);
@@ -24,38 +34,30 @@ export default function NewJobPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  function updateItem(
-    setter: React.Dispatch<React.SetStateAction<string[]>>,
-    index: number,
-    value: string
-  ) {
-    setter((current) =>
-      current.map((item, i) =>
-        i === index ? value : item
-      )
-    );
-  }
+  useEffect(() => {
+    async function loadRecruiters() {
+      const { data, error: recruitersError } = await supabase
+        .from("profiles")
+        .select("id,full_name,email")
+        .in("role", ["owner", "admin", "recruiter"])
+        .eq("status", "active")
+        .order("full_name", { ascending: true });
 
-  function addItem(
-    setter: React.Dispatch<React.SetStateAction<string[]>>
-  ) {
-    setter((current) => [...current, ""]);
-  }
+      if (recruitersError) {
+        setError(recruitersError.message);
+        return;
+      }
 
-  function removeItem(
-    setter: React.Dispatch<React.SetStateAction<string[]>>,
-    index: number
-  ) {
-    setter((current) =>
-      current.length === 1
-        ? current
-        : current.filter((_, i) => i !== index)
-    );
-  }
+      setRecruiters((data || []) as Recruiter[]);
+    }
+
+    void loadRecruiters();
+  }, []);
 
   async function createJob(status: "draft" | "published") {
     setSaving(true);
     setError("");
+    setAssignmentNotice("");
 
     if (!title.trim() || !company.trim()) {
       setError("Job title and company are required.");
@@ -129,9 +131,63 @@ export default function NewJobPage() {
       return;
     }
 
+    if (selectedRecruiterId) {
+      const { data: applications, error: applicationsError } =
+        await supabase
+          .from("applications")
+          .select("id,recruiter_id")
+          .eq("job_id", jobId);
+
+      if (applicationsError) {
+        console.error("Load applications for recruiter assignment error:", applicationsError);
+        setAssignmentNotice(
+          "Job created, but recruiter assignment is unavailable because this database does not expose application assignments. The selected recruiter was kept in this confirmation only and was not written to the job."
+        );
+      } else if (applications && applications.length > 0) {
+        const { error: assignmentError } = await supabase
+          .from("applications")
+          .update({ recruiter_id: selectedRecruiterId })
+          .eq("job_id", jobId);
+
+        if (assignmentError) {
+          console.error("Assign recruiter error:", assignmentError);
+          setAssignmentNotice(
+            "Job created, but recruiter assignment could not be saved on the existing applications. The selected recruiter was kept in this confirmation only."
+          );
+        } else {
+          setAssignmentNotice(
+            "The selected recruiter was assigned to the existing applications for this job."
+          );
+        }
+      } else {
+        setAssignmentNotice(
+          "Job created. No applications exist yet, so the selected recruiter was kept in this confirmation only. Assignments can be made after applications arrive."
+        );
+      }
+    }
+
+    if (selectedRecruiterId) {
+      setSaving(false);
+      return;
+    }
+
     router.push("/recruiter/jobs");
     router.refresh();
   }
+
+  const filteredRecruiters = recruiters.filter((recruiter) => {
+    const query = recruiterSearch.trim().toLowerCase();
+    return (
+      !query ||
+      `${recruiter.full_name || ""} ${recruiter.email || ""}`
+        .toLowerCase()
+        .includes(query)
+    );
+  });
+
+  const selectedRecruiter = recruiters.find(
+    (recruiter) => recruiter.id === selectedRecruiterId
+  );
 
   return (
     <main className="min-h-screen bg-[#03040a] text-white">
@@ -230,6 +286,73 @@ export default function NewJobPage() {
           </section>
 
           <section className="rounded-3xl border border-white/10 bg-white/[0.025] p-6">
+            <h2 className="text-lg font-semibold">Recruiter Assignment</h2>
+            <p className="mt-2 text-sm text-white/45">
+              Select an internal recruiter by name or email. New jobs have no applications to assign until candidates apply.
+            </p>
+
+            <label className="mt-5 block">
+              <span className="text-xs font-medium uppercase tracking-wider text-white/40">
+                Recruiter
+              </span>
+              <input
+                value={recruiterSearch}
+                onChange={(event) => setRecruiterSearch(event.target.value)}
+                placeholder="Search name or email"
+                aria-label="Search recruiters by name or email"
+                className="mt-2 w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-purple-300/40"
+              />
+            </label>
+
+            <div className="mt-3 max-h-52 space-y-2 overflow-y-auto">
+              {filteredRecruiters.length === 0 ? (
+                <p className="rounded-xl border border-white/10 px-4 py-3 text-sm text-white/40">
+                  No active recruiters found.
+                </p>
+              ) : (
+                filteredRecruiters.map((recruiter) => {
+                  const selected = recruiter.id === selectedRecruiterId;
+                  return (
+                    <button
+                      key={recruiter.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedRecruiterId(selected ? "" : recruiter.id);
+                        setRecruiterSearch(
+                          selected
+                            ? ""
+                            : recruiter.full_name || recruiter.email || ""
+                        );
+                      }}
+                      className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left text-sm transition ${
+                        selected
+                          ? "border-purple-300/50 bg-purple-300/10 text-white"
+                          : "border-white/10 bg-black/20 text-white/70 hover:border-white/25 hover:text-white"
+                      }`}
+                    >
+                      <span>
+                        <span className="block font-medium">
+                          {recruiter.full_name || "Unnamed recruiter"}
+                        </span>
+                        <span className="block text-xs text-white/40">
+                          {recruiter.email || "No email"}
+                        </span>
+                      </span>
+                      {selected && <Check size={16} />}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            {selectedRecruiter && (
+              <p className="mt-3 text-xs text-purple-200/70">
+                Selected: {selectedRecruiter.full_name || selectedRecruiter.email}
+              </p>
+            )}
+          </section>
+
+          <section className="rounded-3xl border border-white/10 bg-white/[0.025] p-6">
             <h2 className="text-lg font-semibold">
               Job Description
             </h2>
@@ -263,6 +386,12 @@ export default function NewJobPage() {
             </div>
           )}
 
+          {assignmentNotice && (
+            <div className="rounded-2xl border border-purple-300/20 bg-purple-300/5 p-4 text-sm text-purple-100">
+              {assignmentNotice}
+            </div>
+          )}
+
           <div className="flex flex-wrap justify-end gap-3 border-t border-white/10 pt-6">
 
             <button
@@ -270,12 +399,12 @@ export default function NewJobPage() {
               onClick={() => router.push("/recruiter/jobs")}
               className="rounded-xl border border-white/10 px-5 py-3 text-sm font-medium text-white/60 hover:bg-white/[0.05] hover:text-white"
             >
-              Cancel
+              {assignmentNotice ? "Continue to Jobs" : "Cancel"}
             </button>
 
             <button
               type="button"
-              disabled={saving}
+              disabled={saving || Boolean(assignmentNotice)}
               onClick={() => createJob("draft")}
               className="rounded-xl border border-white/10 bg-white/[0.05] px-5 py-3 text-sm font-semibold text-white hover:bg-white/[0.09] disabled:opacity-50"
             >

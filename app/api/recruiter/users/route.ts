@@ -121,8 +121,23 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const { data: authUsers } = await supabaseAdmin.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+    const authById = new Map(
+      (authUsers.users || []).map((authUser) => [authUser.id, authUser])
+    );
+
     return NextResponse.json({
-      users: data || [],
+      users: (data || []).map((profile) => {
+        const authUser = authById.get(profile.id);
+        return {
+          ...profile,
+          email_confirmed_at: authUser?.email_confirmed_at || null,
+          last_sign_in_at: authUser?.last_sign_in_at || null,
+        };
+      }),
     });
   } catch (error) {
     console.error("Get users error:", error);

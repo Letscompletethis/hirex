@@ -19,6 +19,7 @@ import {
   Phone,
   ExternalLink,
   User,
+  ScanText,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
@@ -28,6 +29,14 @@ import {
   serializeCandidateNotes,
   type CandidateNote,
 } from "../../../lib/candidate-notes";
+import {
+  APPLICATION_STATUSES,
+  formatApplicationStatus,
+} from "../../../lib/statuses";
+import {
+  extractResumeText,
+  type ParsedResume,
+} from "../../../lib/resume-text-extraction";
 
 type Candidate = {
   ID?: string;
@@ -75,8 +84,11 @@ export default function RecruiterCandidatesPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
 
   const [loading, setLoading] = useState(true);
-  const [assigning, setAssigning] = useState(false);
   const [changingStatus, setChangingStatus] = useState(false);
+  const [bulkRecruiterId, setBulkRecruiterId] = useState("");
+  const [bulkRecruiterSearch, setBulkRecruiterSearch] = useState("");
+  const [bulkStatus, setBulkStatus] = useState("");
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -96,11 +108,18 @@ export default function RecruiterCandidatesPage() {
     useState<"asc" | "desc">("desc");
 
   const [assignJobId, setAssignJobId] = useState("");
+  const [assignJobSearch, setAssignJobSearch] = useState("");
+  const [recruiters, setRecruiters] = useState<
+    { id: string; full_name: string | null; email: string | null }[]
+  >([]);
 
   const [selectedCandidateIndex, setSelectedCandidateIndex] =
     useState<number | null>(null);
 
   const [resumeUrl, setResumeUrl] = useState("");
+  const [parsedResume, setParsedResume] = useState<ParsedResume | null>(null);
+  const [parsingResume, setParsingResume] = useState(false);
+  const [parseMessage, setParseMessage] = useState("");
   const [noteText, setNoteText] = useState("");
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingNoteText, setEditingNoteText] = useState("");
@@ -141,6 +160,17 @@ export default function RecruiterCandidatesPage() {
       }
 
       setJobs((jobsRequest.data as Job[]) || []);
+
+      const recruitersRequest = await supabase
+        .from("profiles")
+        .select("id,full_name,email")
+        .in("role", ["owner", "admin", "recruiter"])
+        .eq("status", "active")
+        .order("full_name", { ascending: true });
+
+      if (!recruitersRequest.error) {
+        setRecruiters(recruitersRequest.data || []);
+      }
     } catch (err) {
       console.error("Recruiter candidates error:", err);
 
@@ -341,91 +371,115 @@ export default function RecruiterCandidatesPage() {
     }
   }
 
-  async function assignCandidates() {
-    if (!assignJobId) {
-      setError("Please select a job first.");
-      return;
-    }
+  const filteredBulkRecruiters = recruiters.filter((recruiter) => {
+    const query = bulkRecruiterSearch.toLowerCase().trim();
+    return !query || `${recruiter.full_name || ""} ${recruiter.email || ""}`.toLowerCase().includes(query);
+  });
 
-    if (selectedIds.length === 0) {
-      setError(
-        "Please select at least one candidate."
-      );
-      return;
-    }
+  function selectedCandidates() {
+    return candidates.filter((candidate) => selectedIds.includes(getCandidateDbId(candidate)));
+  }
 
-    const selectedJob = jobs.find(
-      (job) => job.id === assignJobId
-    );
-
-    if (!selectedJob) {
-      setError("Selected job was not found.");
-      return;
-    }
-
-    setAssigning(true);
+  async function assignRecruiterToCandidates() {
+    if (!bulkRecruiterId || selectedIds.length === 0) return;
+    setBulkActionLoading(true);
     setError("");
     setSuccess("");
-
     try {
+      const { error: updateError } = await supabase
+        .from("applications")
+        .update({ recruiter_id: bulkRecruiterId })
+        .in("candidate_id", selectedIds);
+      if (updateError) throw new Error(updateError.message);
+      setSuccess(`Recruiter assigned to ${selectedIds.length} selected candidate${selectedIds.length === 1 ? "" : "s"}.`);
+      setSelectedIds([]);
+      setBulkRecruiterId("");
+      setBulkRecruiterSearch("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not assign recruiter.");
+    } finally {
+      setBulkActionLoading(false);
+    }
+  }
+
+  async function changeSelectedApplicationStatuses() {
+    if (!bulkStatus || selectedIds.length === 0) return;
+    setBulkActionLoading(true);
+    setError("");
+    setSuccess("");
+    try {
+      const { error: updateError } = await supabase
+        .from("applications")
+        .update({ status: bulkStatus })
+        .in("candidate_id", selectedIds);
+      if (updateError) throw new Error(updateError.message);
+      setSuccess(`${selectedIds.length} candidate${selectedIds.length === 1 ? "" : "s"} moved to ${formatApplicationStatus(bulkStatus)}.`);
+      setSelectedIds([]);
+      setBulkStatus("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not change application status.");
+    } finally {
+      setBulkActionLoading(false);
+    }
+  }
+
+  async function transferCandidatesToJob() {
+    if (!assignJobId || selectedIds.length === 0) return;
+    const destinationJob = jobs.find((job) => job.id === assignJobId);
+    if (!destinationJob) return;
+    setBulkActionLoading(true);
+    setError("");
+    setSuccess("");
+    try {
+      let transferred = 0;
       for (const candidateId of selectedIds) {
-        const existingApplication = await supabase
-          .from("applications")
-          .select("id")
-          .eq("candidate_id", candidateId)
-          .eq("job_id", selectedJob.id)
-          .limit(1);
-
-        if (existingApplication.error) {
-          throw new Error(existingApplication.error.message);
-        }
-
-        if ((existingApplication.data || []).length > 0) {
-          continue;
-        }
-
-        const jobCandidateNumber =
-          await allocateJobCandidateNumber(
-            supabase,
-            selectedJob.id
-          );
-
-        const application = await supabase
-          .from("applications")
-          .insert({
-            candidate_id: candidateId,
-            job_id: selectedJob.id,
-            status: "new",
-            job_candidate_number: jobCandidateNumber,
-          });
-
-        if (application.error) {
-          throw new Error(application.error.message);
-        }
+        const existing = await supabase.from("applications").select("id").eq("candidate_id", candidateId).eq("job_id", destinationJob.id).limit(1);
+        if (existing.error) throw new Error(existing.error.message);
+        if ((existing.data || []).length > 0) continue;
+        const jobCandidateNumber = await allocateJobCandidateNumber(supabase, destinationJob.id);
+        const inserted = await supabase.from("applications").insert({ candidate_id: candidateId, job_id: destinationJob.id, status: "submission", job_candidate_number: jobCandidateNumber });
+        if (inserted.error) throw new Error(inserted.error.message);
+        transferred += 1;
       }
-
-      setSuccess(
-        `${selectedIds.length} candidate${
-          selectedIds.length === 1
-            ? ""
-            : "s"
-        } assigned to ${selectedJob.title}.`
-      );
-
+      setSuccess(`${transferred} candidate${transferred === 1 ? "" : "s"} transferred to ${destinationJob.title}.`);
       setSelectedIds([]);
       setAssignJobId("");
-
+      setAssignJobSearch("");
       await loadCandidates();
     } catch (err) {
-      console.error("Assignment error:", err);
-
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Could not assign candidates."
-      );
+      setError(err instanceof Error ? err.message : "Could not transfer candidates.");
     } finally {
-      setAssigning(false);
+      setBulkActionLoading(false);
+    }
+  }
+
+  async function addNoteToSelectedCandidates() {
+    const text = window.prompt("Add note to selected candidates:")?.trim();
+    if (!text || selectedIds.length === 0) return;
+    setBulkActionLoading(true);
+    setError("");
+    setSuccess("");
+    try {
+      const { data: user } = await supabase.auth.getUser();
+      const { data: profile } = user.user
+        ? await supabase.from("profiles").select("full_name,email").eq("id", user.user.id).maybeSingle()
+        : { data: null };
+      const author = profile?.full_name || profile?.email || user.user?.email || "HireX";
+      for (const candidate of selectedCandidates()) {
+        const candidateId = getCandidateDbId(candidate);
+        const note: CandidateNote = { id: crypto.randomUUID(), text, author, createdAt: new Date().toISOString() };
+        const notes = [...parseCandidateNotes(candidate.notes), note];
+        let result = await supabase.from("candidates").update({ notes: serializeCandidateNotes(notes) }).eq("ID", candidateId);
+        if (result.error) result = await supabase.from("candidates").update({ notes: serializeCandidateNotes(notes) }).eq("id", candidateId);
+        if (result.error) throw new Error(result.error.message);
+      }
+      setSuccess(`Note added to ${selectedIds.length} selected candidate${selectedIds.length === 1 ? "" : "s"}.`);
+      setSelectedIds([]);
+      await loadCandidates();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add note.");
+    } finally {
+      setBulkActionLoading(false);
     }
   }
 
@@ -442,6 +496,8 @@ export default function RecruiterCandidatesPage() {
     );
 
     setResumeUrl("");
+    setParsedResume(null);
+    setParseMessage("");
     setError("");
 
     if (
@@ -499,6 +555,43 @@ export default function RecruiterCandidatesPage() {
       setError(
         "Unable to open resume."
       );
+    }
+  }
+
+  async function parseResume() {
+    if (!resumeUrl) {
+      setParseMessage("Resume preview is still loading.");
+      return;
+    }
+
+    setParsingResume(true);
+    setParsedResume(null);
+    setParseMessage("");
+
+    try {
+      const response = await fetch(resumeUrl);
+      if (!response.ok) {
+        throw new Error("Resume could not be downloaded.");
+      }
+      const contentType = response.headers.get("content-type")?.toLowerCase() || "";
+      const path = selectedCandidate?.resume_path?.toLowerCase() || "";
+      const isTextResume =
+        contentType.startsWith("text/") ||
+        /\.(txt|md|rtf)(?:$|\?)/.test(path);
+
+      if (!isTextResume) {
+        setParseMessage("Text extraction only. PDF parsing is not supported in this workspace.");
+        return;
+      }
+
+      const parsed = extractResumeText(await response.text());
+      setParsedResume(parsed);
+      setParseMessage("Text extraction complete. Only clearly labelled or pattern-matched fields are shown.");
+    } catch (err) {
+      console.error("Resume parsing error:", err);
+      setParseMessage("Text extraction could not read this resume.");
+    } finally {
+      setParsingResume(false);
     }
   }
 
@@ -585,6 +678,8 @@ export default function RecruiterCandidatesPage() {
   function closeProfile() {
     setSelectedCandidateIndex(null);
     setResumeUrl("");
+    setParsedResume(null);
+    setParseMessage("");
     setNoteText("");
   }
 
@@ -704,6 +799,8 @@ export default function RecruiterCandidatesPage() {
     );
 
     setResumeUrl("");
+    setParsedResume(null);
+    setParseMessage("");
 
     if (
       (candidate.status || "new").toLowerCase() ===
@@ -1039,55 +1136,92 @@ export default function RecruiterCandidatesPage() {
                 </p>
 
                 <p className="mt-1 text-xs text-white/35">
-                  Assign the selected candidates to a job.
+                  Apply changes to the selected candidates&apos; applications.
                 </p>
               </div>
 
-              <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="grid w-full gap-2 sm:grid-cols-2 lg:max-w-[900px] xl:grid-cols-4">
+                <input
+                  value={bulkRecruiterSearch}
+                  onChange={(event) => setBulkRecruiterSearch(event.target.value)}
+                  placeholder="Search recruiter..."
+                  className="h-10 min-w-0 rounded-lg border border-white/10 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-purple-400/40"
+                />
                 <select
-                  value={assignJobId}
-                  onChange={(event) =>
-                    setAssignJobId(
-                      event.target.value
-                    )
-                  }
-                  className="h-10 min-w-[260px] rounded-lg border border-white/10 bg-[#090a11] px-3 text-sm text-white outline-none focus:border-purple-400/40"
+                  value={bulkRecruiterId}
+                  onChange={(event) => setBulkRecruiterId(event.target.value)}
+                  className="h-10 min-w-0 rounded-lg border border-white/10 bg-[#090a11] px-3 text-sm text-white outline-none focus:border-purple-400/40"
                 >
-                  <option value="">
-                    Select job...
-                  </option>
-
-                  {jobs.map((job) => (
-                    <option
-                      key={job.id}
-                      value={job.id}
-                    >
-                      {job.title}
+                  <option value="">Assign recruiter...</option>
+                  {filteredBulkRecruiters.map((recruiter) => (
+                    <option key={recruiter.id} value={recruiter.id}>
+                      {recruiter.full_name || recruiter.email || recruiter.id}
                     </option>
                   ))}
                 </select>
 
                 <button
                   type="button"
-                  onClick={assignCandidates}
-                  disabled={
-                    assigning ||
-                    !assignJobId
-                  }
+                  onClick={assignRecruiterToCandidates}
+                  disabled={bulkActionLoading || !bulkRecruiterId}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.08] px-4 text-sm font-semibold text-white transition hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Assign Recruiter
+                </button>
+
+                <select
+                  value={bulkStatus}
+                  onChange={(event) => setBulkStatus(event.target.value)}
+                  className="h-10 min-w-0 rounded-lg border border-white/10 bg-[#090a11] px-3 text-sm text-white outline-none focus:border-purple-400/40"
+                >
+                  <option value="">Change status...</option>
+                  {APPLICATION_STATUSES.map((status) => (
+                    <option key={status} value={status}>{formatApplicationStatus(status)}</option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={changeSelectedApplicationStatuses}
+                  disabled={bulkActionLoading || !bulkStatus}
+                  className="h-10 rounded-lg border border-white/10 px-4 text-sm text-white/70 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Change Status
+                </button>
+
+                <input
+                  value={assignJobSearch}
+                  onChange={(event) => setAssignJobSearch(event.target.value)}
+                  placeholder="Search destination job..."
+                  className="h-10 min-w-0 rounded-lg border border-white/10 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-purple-400/40"
+                />
+                <select
+                  value={assignJobId}
+                  onChange={(event) => setAssignJobId(event.target.value)}
+                  className="h-10 min-w-0 rounded-lg border border-white/10 bg-[#090a11] px-3 text-sm text-white outline-none focus:border-purple-400/40"
+                >
+                  <option value="">Transfer to job...</option>
+                  {jobs
+                    .filter((job) => !assignJobSearch.trim() || job.title.toLowerCase().includes(assignJobSearch.toLowerCase().trim()))
+                    .map((job) => <option key={job.id} value={job.id}>{job.title}</option>)}
+                </select>
+                <button
+                  type="button"
+                  onClick={transferCandidatesToJob}
+                  disabled={bulkActionLoading || !assignJobId}
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-purple-500 px-4 text-sm font-semibold text-white transition hover:bg-purple-400 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {assigning ? (
-                    <Loader2
-                      size={15}
-                      className="animate-spin"
-                    />
-                  ) : (
-                    <BriefcaseBusiness
-                      size={15}
-                    />
-                  )}
+                  <BriefcaseBusiness size={15} />
+                  Transfer to Job
+                </button>
 
-                  Assign to Job
+                <button
+                  type="button"
+                  onClick={addNoteToSelectedCandidates}
+                  disabled={bulkActionLoading}
+                  className="h-10 rounded-lg border border-white/10 px-4 text-sm text-white/70 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Add Note
                 </button>
               </div>
             </div>
@@ -1808,18 +1942,43 @@ export default function RecruiterCandidatesPage() {
                           Resume
                         </div>
 
-                        <a
-                          href={resumeUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/60 hover:bg-white/[0.08] hover:text-white"
-                        >
-                          <ExternalLink
-                            size={13}
-                          />
-                          Open in New Tab
-                        </a>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={parseResume}
+                            disabled={parsingResume}
+                            className="inline-flex items-center gap-2 rounded-lg border border-purple-300/20 bg-purple-300/10 px-3 py-2 text-xs text-purple-100 hover:bg-purple-300/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {parsingResume ? <Loader2 size={13} className="animate-spin" /> : <ScanText size={13} />}
+                            {parsingResume ? "Extracting..." : "Parse Resume"}
+                          </button>
+                          <a
+                            href={resumeUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/60 hover:bg-white/[0.08] hover:text-white"
+                          >
+                            <ExternalLink size={13} />
+                            Open in New Tab
+                          </a>
+                        </div>
                       </div>
+
+                      {(parseMessage || parsedResume) && (
+                        <section className="shrink-0 border-b border-white/10 bg-purple-300/[0.04] px-4 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-purple-200/80">Text extraction</p>
+                          {parseMessage && <p className="mt-1 text-xs text-white/45">{parseMessage}</p>}
+                          {parsedResume && (
+                            <dl className="mt-3 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2">
+                              <div><dt className="text-white/30">Name</dt><dd className="text-white/75">{parsedResume.name || "Not found"}</dd></div>
+                              <div><dt className="text-white/30">Email</dt><dd className="text-white/75">{parsedResume.email || "Not found"}</dd></div>
+                              <div><dt className="text-white/30">Phone</dt><dd className="text-white/75">{parsedResume.phone || "Not found"}</dd></div>
+                              <div><dt className="text-white/30">Location</dt><dd className="text-white/75">{parsedResume.location || "Not found"}</dd></div>
+                              <div className="sm:col-span-2"><dt className="text-white/30">Skills</dt><dd className="text-white/75">{parsedResume.skills.length ? parsedResume.skills.join(", ") : "Not found"}</dd></div>
+                            </dl>
+                          )}
+                        </section>
+                      )}
 
                       <iframe
                         src={resumeUrl}
