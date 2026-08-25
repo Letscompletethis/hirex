@@ -2,6 +2,7 @@
 
 import { ReactNode, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   LayoutDashboard,
   BriefcaseBusiness,
@@ -18,8 +19,10 @@ import {
   ChevronRight,
   Building2,
   ShieldCheck,
+  Handshake,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
+import { isPrivilegedRole, normalizeRole } from "../../lib/roles";
 import ThemeToggle from "../ThemeToggle";
 
 type NavItem = {
@@ -78,6 +81,11 @@ const mainNavigation: NavItem[] = [
 
 const ownerNavigation: NavItem[] = [
   {
+    label: "Business Development",
+    href: "/recruiter/business-development",
+    icon: <Handshake size={18} />,
+  },
+  {
     label: "Recruiters",
     href: "/recruiter/recruiters",
     icon: <UserRound size={18} />,
@@ -110,6 +118,7 @@ export default function RecruiterLayout({
   const [userEmail, setUserEmail] = useState("");
   const [userName, setUserName] = useState("Recruiter");
   const [userRole, setUserRole] = useState("Recruiter");
+  const [profileUnavailable, setProfileUnavailable] = useState(false);
 
   const isPublicAuthPage =
     pathname === "/recruiter/login" ||
@@ -134,36 +143,26 @@ export default function RecruiterLayout({
           return;
         }
 
-        const email = user.email || "";
-
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("full_name, role, status")
-          .eq("id", user.id)
-          .maybeSingle();
-
-        if (profileError) {
-          console.error("Unable to load recruiter profile:", profileError);
-        }
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("Session unavailable");
+        const response = await fetch("/api/recruiter/me", { headers: { Authorization: `Bearer ${session.access_token}` } });
+        const account = await response.json() as { role?: string; user?: { email?: string; fullName?: string }; error?: string };
 
         if (cancelled) {
           return;
         }
 
-        const profileRole = String(
-          profile?.role || "recruiter"
-        ).toLowerCase();
+        const profileRole = normalizeRole(account.role);
+        if (!response.ok || !profileRole) {
+          console.error("Recruiter profile is unavailable or unauthorized:", account.error);
+          setProfileUnavailable(true);
+          return;
+        }
 
-        const fullName =
-          profile?.full_name ||
-          user.user_metadata?.full_name ||
-          user.user_metadata?.name ||
-          "";
+        const email = account.user?.email || user.email || "";
+        const fullName = account.user?.fullName || user.user_metadata?.full_name || user.user_metadata?.name || "";
 
-        const owner =
-          profileRole === "owner" ||
-          profileRole === "admin" ||
-          profileRole === "super_admin";
+        const owner = isPrivilegedRole(profileRole);
 
         setUserEmail(email);
 
@@ -242,6 +241,10 @@ export default function RecruiterLayout({
 
   if (isPublicAuthPage) {
     return <>{children}</>;
+  }
+
+  if (profileUnavailable) {
+    return <main className="flex min-h-screen items-center justify-center bg-[#03040a] px-5 text-center text-white"><div><h1 className="text-xl font-semibold">Profile unavailable</h1><p className="mt-2 text-sm text-white/55">Your HireX profile could not be verified. Please contact an administrator.</p></div></main>;
   }
 
   return (
@@ -473,7 +476,7 @@ export default function RecruiterLayout({
                     My Performance
                   </p>
 
-                  <a
+                  <Link
                     href="/recruiter/recruiters"
                     onClick={closeMenu}
                     className={
@@ -501,7 +504,7 @@ export default function RecruiterLayout({
                       />
                     )}
 
-                  </a>
+                  </Link>
 
                 </div>
               )}
@@ -515,7 +518,7 @@ export default function RecruiterLayout({
 
                   <div className="space-y-1">
 
-                    {ownerNavigation.map((item) => {
+                    {ownerNavigation.filter((item) => item.label !== "Business Development" || userRole === "Owner").map((item) => {
                       const active = isActive(item.href);
 
                       return (

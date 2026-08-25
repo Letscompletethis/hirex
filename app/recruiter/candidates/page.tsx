@@ -1,24 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
-  Check,
   X,
   FileText,
   BriefcaseBusiness,
-  Filter,
-  Users,
   Loader2,
   ArrowLeft,
   Mail,
   Phone,
   ExternalLink,
   User,
+  Users,
   Upload,
   History,
   StickyNote,
@@ -36,8 +34,11 @@ import {
   APPLICATION_STATUSES,
   formatApplicationStatus,
   normalizeApplicationStatus,
+  normalizeStoredApplicationStatus,
 } from "../../../lib/statuses";
 import { extractResumeFile, type ParsedResume } from "../../../lib/resume-text-extraction";
+import { transitionApplicationStatus } from "../../../lib/application-transition";
+import CandidateProfile from "../components/CandidateProfile";
 
 type Candidate = {
   ID?: string;
@@ -53,6 +54,11 @@ type Candidate = {
   status: string | null;
   created_at: string | null;
   current_job_title: string | null;
+  current_company: string | null;
+  location: string | null;
+  experience: string | null;
+  skills: string[] | null;
+  education: Record<string, unknown> | null;
   notes: string | null;
   viewed_at?: string | null;
   candidate_number?: number | null;
@@ -147,6 +153,7 @@ export default function RecruiterCandidatesPage() {
   const [confirmingImports, setConfirmingImports] = useState(false);
   const [notesPanelOpen, setNotesPanelOpen] = useState(false);
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
+  const resumeInputRef = useRef<HTMLInputElement>(null);
 
   async function loadCandidates() {
     setLoading(true);
@@ -155,120 +162,121 @@ export default function RecruiterCandidatesPage() {
     try {
       const candidatesRequest = await supabase
         .from("candidates")
-        .select("*");
+        .select("*")
+        .order("created_at", { ascending: false });
 
-      if (candidatesRequest.error) {
+      /*
+      async function parseResumeItems(items: UploadItem[]) {
         throw new Error(
           candidatesRequest.error.message ||
             "Could not load candidates."
         );
+        const parseOne = async (item: UploadItem) => {
+          setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "parsing", message: undefined } : current));
+          try {
+            const parsed = await extractResumeFile(item.file);
+            setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "parsed", parsed } : current));
+            return true;
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Could not process this file.";
+            const unsupported = message.startsWith("Unsupported format:");
+            setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: unsupported ? "unsupported" : "failed", message } : current));
+            return false;
+          }
+        };
+
+        try {
+          const results = await Promise.all(readyItems.map(parseOne));
+          const parsedCount = results.filter(Boolean).length;
+          if (parsedCount > 0) setSuccess(`${parsedCount} resume${parsedCount === 1 ? "" : "s"} parsed successfully. Review the fields before importing.`);
+        } finally {
+          setProcessingUploads(false);
+        }
       }
 
-      setCandidates(
-        (candidatesRequest.data as Candidate[]) || []
-      );
-
-      const jobsRequest = await supabase
-        .from("jobs")
-        .select("*")
-        .order("created_at", {
-          ascending: false,
-        });
-
-      if (jobsRequest.error) {
-        throw new Error(
-          jobsRequest.error.message ||
-            "Could not load jobs."
-        );
+      async function uploadAndParseResumes() {
+        await parseResumeItems(uploadItems);
       }
 
-      setJobs((jobsRequest.data as Job[]) || []);
-
-      const applicationsRequest = await supabase
-        .from("applications")
-        .select("id,candidate_id,job_id,applied_at,recruiter_id,status");
-      if (!applicationsRequest.error) {
-        setApplications((applicationsRequest.data as CandidateApplication[]) || []);
+      function updateUploadField(id: string, field: keyof ParsedResume, value: string) {
+        setUploadItems((previous) => previous.map((item) => item.id === id && item.parsed
+              ? { ...item, parsed: { ...item.parsed, [field]: value } }
+          : item));
       }
 
-      const recruitersRequest = await supabase
-        .from("profiles")
-        .select("id,full_name,email")
-        .in("role", ["owner", "admin", "recruiter"])
-        .eq("status", "active")
-        .order("full_name", { ascending: true });
-
-      if (!recruitersRequest.error) {
-        setRecruiters(recruitersRequest.data || []);
-      }
-    } catch (err) {
-      console.error("Recruiter candidates error:", err);
-
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Could not load candidate pool."
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void Promise.resolve().then(loadCandidates);
-  }, []);
-
-  useEffect(() => {
-    const channel = supabase
-      .channel("recruiter-candidates-sync")
-      .on("postgres_changes", { event: "*", schema: "public", table: "candidates" }, () => void loadCandidates())
-      .on("postgres_changes", { event: "*", schema: "public", table: "applications" }, () => void loadCandidates())
-      .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, () => void loadCandidates())
-      .subscribe();
-
-    return () => { void supabase.removeChannel(channel); };
-  }, []);
-
-  function getCandidateDbId(candidate: Candidate) {
-    return candidate.ID || candidate.id || "";
-  }
-
-  const filteredCandidates = useMemo(() => {
-    const searchValue = search
-      .toLowerCase()
-      .trim();
-
-    const result = candidates.filter((candidate) => {
-      if (
-        statusFilter !== "all" &&
-        (APPLICATION_STATUSES.includes(statusFilter as typeof APPLICATION_STATUSES[number])
-          ? normalizeApplicationStatus(candidate.status) !== statusFilter
-          : (candidate.status || "new").toLowerCase() !== statusFilter.toLowerCase())
-      ) {
-        return false;
+      function skipUpload(id: string) {
+        setUploadItems((previous) => previous.map((item) => item.id === id ? { ...item, state: "skipped" } : item));
       }
 
-      if (
-        jobFilter !== "all" &&
-        (candidate.job_id || "") !== jobFilter
-      ) {
-        return false;
+      async function retryUpload(item: UploadItem) {
+        await parseResumeItems([item]);
       }
 
-      if (!searchValue) {
-        return true;
+      async function confirmImports() {
+        const importable = uploadItems.filter((item) => item.state === "parsed" && item.parsed);
+        if (!importable.length) return;
+        setConfirmingImports(true);
+        setError("");
+        setSuccess("");
+        let createdCount = 0;
+        const importErrors: string[] = [];
+        try {
+          const knownEmails = new Set(candidates.map((candidate) => candidate.email?.trim().toLowerCase()).filter(Boolean));
+          for (const item of importable) {
+            try {
+              const parsed = item.parsed as ParsedResume;
+              const email = parsed.email?.trim().toLowerCase() || "";
+              if (!email) throw new Error("Email is required before import.");
+              const duplicateLookup = await supabase.from("candidates").select("*").ilike("email", email).limit(1);
+              if (duplicateLookup.error) throw new Error(duplicateLookup.error.message);
+              const existingCandidate = duplicateLookup.data?.[0] as { ID?: string; id?: string; candidate_id?: string } | undefined;
+              if (existingCandidate) {
+                const existingId = existingCandidate.ID || existingCandidate.id || "";
+                if (!existingId) throw new Error("Existing candidate has no database ID.");
+                const resumePath = `${existingCandidate.candidate_id || existingId}/${Date.now()}-${crypto.randomUUID()}-${item.file.name}`;
+                const upload = await supabase.storage.from("resumes").upload(resumePath, item.file, { contentType: item.file.type || "application/octet-stream", upsert: false });
+                if (upload.error) throw new Error(`Resume upload failed: ${upload.error.message}`);
+                const candidateNumber = existingCandidate.candidate_id || await allocateCandidateNumber(supabase);
+                const nameParts = (parsed.name || "").trim().split(/\s+/).filter(Boolean);
+                const updateValues = { candidate_id: candidateNumber, first_name: nameParts[0] || null, last_name: nameParts.slice(1).join(" ") || null, phone: parsed.phone, current_job_title: parsed.currentJobTitle, resume_path: resumePath };
+                let updated = await supabase.from("candidates").update(updateValues).eq("ID", existingId);
+                if (updated.error) updated = await supabase.from("candidates").update(updateValues).eq("id", existingId);
+                if (updated.error) throw new Error(updated.error.message);
+                knownEmails.add(email);
+                setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "updated", candidateId: candidateNumber, message: `Updated ${candidateNumber}.` } : current));
+                continue;
+              }
+              if (knownEmails.has(email)) throw new Error(`${email} already exists.`);
+              const candidateId = await allocateCandidateNumber(supabase);
+              const resumePath = `${candidateId}/${Date.now()}-${crypto.randomUUID()}-${item.file.name}`;
+              const upload = await supabase.storage.from("resumes").upload(resumePath, item.file, { contentType: item.file.type || "application/octet-stream", upsert: false });
+              if (upload.error) throw new Error(`Resume upload failed: ${upload.error.message}`);
+              const nameParts = (parsed.name || "").trim().split(/\s+/).filter(Boolean);
+              const created = await supabase.from("candidates").insert({ candidate_id: candidateId, first_name: nameParts[0] || null, last_name: nameParts.slice(1).join(" ") || null, email, phone: parsed.phone, current_job_title: parsed.currentJobTitle, resume_path: resumePath, status: "new" }).select("*").single();
+              if (created.error) {
+                await supabase.storage.from("resumes").remove([resumePath]);
+                throw new Error(created.error.message);
+              }
+              knownEmails.add(email);
+              createdCount += 1;
+              setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "updated", candidateId, message: `Created ${candidateId}.` } : current));
+            } catch (err) {
+              const message = err instanceof Error ? err.message : "Could not import this resume.";
+              importErrors.push(`${item.file.name}: ${message}`);
+              setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "failed", message } : current));
+            }
+          }
+          await loadCandidates();
+          if (importErrors.length) setError(importErrors.join(" "));
+          if (createdCount > 0) setSuccess(`${createdCount} candidate${createdCount === 1 ? "" : "s"} imported successfully.`);
+          if (!importErrors.length) {
+            setUploadModalOpen(false);
+            setUploadItems([]);
+          }
+        } finally {
+          setConfirmingImports(false);
+        }
       }
-
-      const searchable = [
-        candidate.candidate_id,
-        candidate.first_name,
-        candidate.last_name,
-        candidate.email,
-        candidate.phone,
-        candidate.current_job_title,
-        candidate.job_title,
-        candidate.status,
-      ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
@@ -321,6 +329,61 @@ export default function RecruiterCandidatesPage() {
     sortColumn,
     sortDirection,
   ]);
+
+      */
+      if (candidatesRequest.error) throw new Error(candidatesRequest.error.message || "Could not load candidates.");
+      setCandidates((candidatesRequest.data as Candidate[]) || []);
+      const jobsRequest = await supabase.from("jobs").select("*").order("created_at", { ascending: false });
+      if (jobsRequest.error) throw new Error(jobsRequest.error.message || "Could not load jobs.");
+      setJobs((jobsRequest.data as Job[]) || []);
+      const applicationsRequest = await supabase.from("applications").select("id,candidate_id,job_id,applied_at,recruiter_id,status");
+      if (!applicationsRequest.error) setApplications((applicationsRequest.data as CandidateApplication[]) || []);
+      const recruitersRequest = await supabase.from("profiles").select("id,full_name,email").in("role", ["owner", "admin", "recruiter"]).eq("status", "active").order("full_name", { ascending: true });
+      if (!recruitersRequest.error) setRecruiters(recruitersRequest.data || []);
+    } catch (err) {
+      console.error("Recruiter candidates error:", err);
+      setError(err instanceof Error ? err.message : "Could not load candidate pool.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      const requestedStatus = new URLSearchParams(window.location.search).get("status");
+      if (requestedStatus) setStatusFilter(requestedStatus);
+      return loadCandidates();
+    });
+  }, []);
+
+  useEffect(() => {
+    const channel = supabase.channel("recruiter-candidates-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "candidates" }, () => void loadCandidates())
+      .on("postgres_changes", { event: "*", schema: "public", table: "applications" }, () => void loadCandidates())
+      .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, () => void loadCandidates())
+      .subscribe();
+    const refreshTimer = window.setInterval(() => void loadCandidates(), 15000);
+    return () => { window.clearInterval(refreshTimer); void supabase.removeChannel(channel); };
+  }, []);
+
+  function getCandidateDbId(candidate: Candidate) { return candidate.ID || candidate.id || ""; }
+
+  const filteredCandidates = useMemo(() => {
+    const searchValue = search.toLowerCase().trim();
+    const result = candidates.filter((candidate) => {
+      if (statusFilter !== "all" && (APPLICATION_STATUSES.includes(statusFilter as typeof APPLICATION_STATUSES[number]) ? normalizeApplicationStatus(candidate.status) !== statusFilter : (candidate.status || "new").toLowerCase() !== statusFilter.toLowerCase())) return false;
+      if (jobFilter !== "all" && (candidate.job_id || "") !== jobFilter) return false;
+      if (!searchValue) return true;
+      return [candidate.candidate_id, candidate.first_name, candidate.last_name, candidate.email, candidate.phone, candidate.current_job_title, candidate.job_title, candidate.status].filter(Boolean).join(" ").toLowerCase().includes(searchValue);
+    });
+    result.sort((a, b) => {
+      const aValue = sortColumn === "name" ? `${a.first_name || ""} ${a.last_name || ""}`.trim() : String(a[sortColumn as keyof Candidate] || "");
+      const bValue = sortColumn === "name" ? `${b.first_name || ""} ${b.last_name || ""}`.trim() : String(b[sortColumn as keyof Candidate] || "");
+      const comparison = aValue.toLowerCase().localeCompare(bValue.toLowerCase());
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+    return result;
+  }, [candidates, search, statusFilter, jobFilter, sortColumn, sortDirection]);
 
   const totalPages = Math.max(
     1,
@@ -422,41 +485,84 @@ export default function RecruiterCandidatesPage() {
     return candidates.filter((candidate) => selectedIds.includes(getCandidateDbId(candidate)));
   }
 
-  function handleUploadSelection(event: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files || []);
-    setUploadItems((previous) => [
-      ...previous,
-      ...files.map((file) => ({ id: crypto.randomUUID(), file, state: "ready" as const })),
-    ]);
-    event.target.value = "";
+  function normalizeIdentity(value: string | null | undefined) {
+    return (value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   }
 
-  async function uploadAndParseResumes() {
-    const readyItems = uploadItems.filter((item) => item.state === "ready" || item.state === "failed" || item.state === "unsupported");
+  function normalizePhone(value: string | null | undefined) {
+    return (value || "").replace(/\D/g, "");
+  }
+
+  function candidateMatchesParsed(candidate: Candidate, parsed: ParsedResume) {
+    const email = normalizeIdentity(parsed.email);
+    const phone = normalizePhone(parsed.phone);
+    const name = normalizeIdentity(parsed.name);
+    const candidateName = normalizeIdentity(`${candidate.first_name || ""}${candidate.last_name || ""}`);
+    return Boolean(
+      (email && normalizeIdentity(candidate.email) === email) ||
+      (phone && normalizePhone(candidate.phone) === phone) ||
+      (name && candidateName === name)
+    );
+  }
+
+  async function handleUploadSelection(event: React.ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const files = Array.from(input.files || []);
+    if (files.length === 0) return;
+
+    const newItems = files.map((file) => ({ id: crypto.randomUUID(), file, state: "ready" as const }));
+    setUploadModalOpen(true);
+    setUploadItems((previous) => [
+      ...previous,
+      ...newItems,
+    ]);
+    input.value = "";
+    await parseResumeItems(newItems);
+  }
+
+  async function parseResumeItems(items: UploadItem[]) {
+    const readyItems = items.filter((item) => item.state === "ready" || item.state === "failed" || item.state === "unsupported");
     if (!readyItems.length) return;
     setProcessingUploads(true);
     setError("");
     try {
-      for (const item of readyItems) {
+      const parseOne = async (item: UploadItem) => {
         setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "parsing", message: undefined } : current));
         try {
           const parsed = await extractResumeFile(item.file);
           setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "parsed", parsed } : current));
+          return true;
         } catch (err) {
           const message = err instanceof Error ? err.message : "Could not process this file.";
           const unsupported = message.startsWith("Unsupported format:");
           setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: unsupported ? "unsupported" : "failed", message } : current));
+          return false;
         }
-      }
+      };
+
+      const results = await Promise.all(readyItems.map(parseOne));
+      const parsedCount = results.filter(Boolean).length;
+      if (parsedCount > 0) setSuccess(`${parsedCount} resume${parsedCount === 1 ? "" : "s"} parsed successfully. Review the fields before importing.`);
     } finally {
       setProcessingUploads(false);
     }
   }
 
+  async function uploadAndParseResumes() {
+    await parseResumeItems(uploadItems);
+  }
+
   function updateUploadField(id: string, field: keyof ParsedResume, value: string) {
-    setUploadItems((previous) => previous.map((item) => item.id === id && item.parsed
-      ? { ...item, parsed: { ...item.parsed, [field]: field === "skills" ? value.split(",").map((skill) => skill.trim()).filter(Boolean) : value } }
-      : item));
+    setUploadItems((previous) => previous.map((item) => {
+      if (item.id !== id || !item.parsed) return item;
+      const parsed = { ...item.parsed, [field]: value };
+      if (field === "name") {
+        const nameParts = value.trim().split(/\s+/).filter(Boolean);
+        parsed.firstName = nameParts[0] || null;
+        parsed.lastName = nameParts.slice(1).join(" ") || null;
+      }
+      return { ...item, parsed };
+    }));
   }
 
   function skipUpload(id: string) {
@@ -482,59 +588,55 @@ export default function RecruiterCandidatesPage() {
     setSuccess("");
     let createdCount = 0;
     try {
-      const knownEmails = new Set(candidates.map((candidate) => candidate.email?.trim().toLowerCase()).filter(Boolean));
-      for (const item of importable) {
-        const parsed = item.parsed as ParsedResume;
-        const email = parsed.email?.trim().toLowerCase() || "";
-        if (!email) {
-          setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "failed", message: "Email is required before import." } : current));
-          continue;
-        }
-        const duplicateLookup = await supabase.from("candidates").select("ID,id,candidate_id").ilike("email", email).limit(1);
-        if (duplicateLookup.error) throw new Error(duplicateLookup.error.message);
-        const existingCandidate = duplicateLookup.data?.[0] as { ID?: string; id?: string; candidate_id?: string } | undefined;
-        if (existingCandidate) {
-          const existingId = existingCandidate.ID || existingCandidate.id || "";
-          if (!existingId) throw new Error("Existing candidate has no database ID.");
-          const resumePath = `${existingCandidate.candidate_id || existingId}/${Date.now()}-${crypto.randomUUID()}-${item.file.name}`;
+      const candidateLookup = await supabase.from("candidates").select("*");
+      if (candidateLookup.error) throw new Error(candidateLookup.error.message);
+      const knownCandidates = (candidateLookup.data as Candidate[]) || candidates;
+      const reservedIdentities = new Set<string>();
+      await Promise.all(importable.map(async (item) => {
+        try {
+          const parsed = item.parsed as ParsedResume;
+          const email = parsed.email?.trim().toLowerCase() || null;
+          if (!parsed.name && !email && !parsed.phone) throw new Error("Name, email, or phone is required before import.");
+          const identityKey = normalizeIdentity(email) || normalizePhone(parsed.phone) || normalizeIdentity(parsed.name);
+          if (reservedIdentities.has(identityKey)) {
+            setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "duplicate", message: "Already exists in this import batch." } : current));
+            return;
+          }
+          reservedIdentities.add(identityKey);
+          const existingCandidate = knownCandidates.find((candidate) => candidateMatchesParsed(candidate, parsed));
+          if (existingCandidate) {
+            const existingId = existingCandidate.ID || existingCandidate.id || "";
+            if (!existingId) throw new Error("Existing candidate has no database ID.");
+            setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "duplicate", candidateId: existingCandidate.candidate_id || undefined, message: `Already exists as ${existingCandidate.candidate_id || existingId}.` } : current));
+            return;
+          }
+          const candidateId = await allocateCandidateNumber(supabase);
+          const resumePath = `${candidateId}/${Date.now()}-${crypto.randomUUID()}-${item.file.name}`;
           const upload = await supabase.storage.from("resumes").upload(resumePath, item.file, { contentType: item.file.type || "application/octet-stream", upsert: false });
           if (upload.error) throw new Error(`Resume upload failed: ${upload.error.message}`);
-          const candidateNumber = existingCandidate.candidate_id || await allocateCandidateNumber(supabase);
-          const versionUpdate = await supabase.from("candidate_resume_versions").update({ is_current: false }).eq("candidate_id", existingId).eq("is_current", true);
-          if (versionUpdate.error) throw new Error(versionUpdate.error.message);
-          const version = await supabase.from("candidate_resume_versions").insert({ candidate_id: existingId, file_name: item.file.name, storage_path: resumePath, mime_type: item.file.type || null, is_current: true }).select("id").single();
-          if (version.error) throw new Error(version.error.message);
-          const nameParts = (parsed.name || "").trim().split(/\s+/).filter(Boolean);
-          const updateValues = { candidate_id: candidateNumber, first_name: nameParts[0] || null, last_name: nameParts.slice(1).join(" ") || null, phone: parsed.phone, resume_path: resumePath };
-          let updated = await supabase.from("candidates").update(updateValues).eq("ID", existingId);
-          if (updated.error) updated = await supabase.from("candidates").update(updateValues).eq("id", existingId);
-          if (updated.error) throw new Error(updated.error.message);
-          knownEmails.add(email);
-          setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "updated", candidateId: candidateNumber, message: `Updated ${candidateNumber}; previous resume retained.` } : current));
-          continue;
+          const created = await supabase.from("candidates").insert({ candidate_id: candidateId, first_name: parsed.firstName, last_name: parsed.lastName, email, phone: parsed.phone, current_job_title: parsed.currentJobTitle, current_company: parsed.currentCompany, linkedin_profile_url: parsed.linkedinUrl, location: parsed.location, experience: parsed.experience, skills: parsed.skills, education: { degree: parsed.degree, institution: parsed.institution, graduationInformation: parsed.graduationInformation }, resume_path: resumePath, status: "new" }).select("*").single();
+          if (created.error) {
+            await supabase.storage.from("resumes").remove([resumePath]);
+            throw new Error(created.error.message);
+          }
+          const version = await supabase.from("candidate_resume_versions").insert({ candidate_id: candidateId, file_name: item.file.name, storage_path: resumePath, mime_type: item.file.type || "application/octet-stream", document_type: "resume", is_current: true });
+          if (version.error) throw new Error(`Could not record resume version: ${version.error.message}`);
+          const event = await supabase.from("candidate_activity_events").insert([
+            { candidate_id: candidateId, event_type: "candidate_created", metadata: { source: "resume_import" } },
+            { candidate_id: candidateId, event_type: "resume_uploaded", metadata: { file_name: item.file.name } },
+            { candidate_id: candidateId, event_type: "resume_parsed", metadata: { fields: Object.keys(parsed) } },
+          ]);
+          if (event.error) throw new Error(`Could not record candidate history: ${event.error.message}`);
+          knownCandidates.push(created.data as Candidate);
+          createdCount += 1;
+          setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "updated", candidateId, message: `Import successful. Created ${candidateId}.` } : current));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Could not import this resume.";
+          setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "failed", message } : current));
         }
-        if (knownEmails.has(email)) {
-          knownEmails.add(email);
-          setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "duplicate", message: `${email} already exists.` } : current));
-          continue;
-        }
-        const candidateId = await allocateCandidateNumber(supabase);
-        const resumePath = `${candidateId}/${Date.now()}-${crypto.randomUUID()}-${item.file.name}`;
-        const upload = await supabase.storage.from("resumes").upload(resumePath, item.file, { contentType: item.file.type || "application/octet-stream", upsert: false });
-        if (upload.error) throw new Error(`Resume upload failed: ${upload.error.message}`);
-        const nameParts = (parsed.name || "").trim().split(/\s+/).filter(Boolean);
-        const created = await supabase.from("candidates").insert({ candidate_id: candidateId, first_name: nameParts[0] || null, last_name: nameParts.slice(1).join(" ") || null, email, phone: parsed.phone, resume_path: resumePath, status: "new" }).select("*").single();
-        if (created.error) {
-          await supabase.storage.from("resumes").remove([resumePath]);
-          throw new Error(created.error.message);
-        }
-        const version = await supabase.from("candidate_resume_versions").insert({ candidate_id: String((created.data as Candidate).ID || (created.data as Candidate).id || candidateId), file_name: item.file.name, storage_path: resumePath, mime_type: item.file.type || null, is_current: true });
-        if (version.error) throw new Error(version.error.message);
-        knownEmails.add(email);
-        createdCount += 1;
-        setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, candidateId, message: `Created ${candidateId}.` } : current));
-      }
+      }));
       await loadCandidates();
+      if (createdCount > 0) setCurrentPage(1);
       setUploadModalOpen(false);
       setUploadItems([]);
       setSuccess(`${createdCount} candidate${createdCount === 1 ? "" : "s"} imported successfully.`);
@@ -755,47 +857,22 @@ export default function RecruiterCandidatesPage() {
     }
 
     try {
-      let result = await supabase
-        .from("candidates")
-        .update({
-          status: newStatus,
-        })
-        .eq("ID", candidateId);
-
-      if (result.error) {
-        result = await supabase
-          .from("candidates")
-          .update({
-            status: newStatus,
-          })
-          .eq("id", candidateId);
+      if (newStatus === "viewed" || newStatus === "new") {
+        let result = await supabase.from("candidates").update({ status: newStatus }).eq("ID", candidateId);
+        if (result.error) result = await supabase.from("candidates").update({ status: newStatus }).eq("id", candidateId);
+        if (result.error) throw new Error(result.error.message);
+      } else {
+        const candidateApplications = applications.filter((application) => application.candidate_id === candidateId);
+        const application = candidateApplications.find((item) => item.job_id && item.job_id === candidate.job_id) || (candidateApplications.length === 1 ? candidateApplications[0] : null);
+        if (!application) throw new Error("Select this candidate from a specific job before changing its stage.");
+        await transitionApplicationStatus(supabase, application.id, normalizeStoredApplicationStatus(newStatus));
       }
 
-      if (result.error) {
-        throw new Error(
-          result.error.message
-        );
+      if (newStatus === "viewed" || newStatus === "new") {
+        setCandidates((previous) => previous.map((item) =>
+          getCandidateDbId(item) === candidateId ? { ...item, status: newStatus } : item
+        ));
       }
-
-      if (newStatus !== "viewed" && newStatus !== "new") {
-        const applicationUpdate = await supabase
-          .from("applications")
-          .update({ status: newStatus })
-          .eq("candidate_id", candidateId);
-        if (applicationUpdate.error) throw new Error(applicationUpdate.error.message);
-      }
-
-      setCandidates((previous) =>
-        previous.map((item) =>
-          getCandidateDbId(item) ===
-          candidateId
-            ? {
-                ...item,
-                status: newStatus,
-              }
-            : item
-        )
-      );
 
       if (!silent) {
         setSuccess(
@@ -842,43 +919,18 @@ export default function RecruiterCandidatesPage() {
     setError("");
 
     try {
-      const { data: user } = await supabase.auth.getUser();
-      const { data: profile } = user.user
-        ? await supabase
-            .from("profiles")
-            .select("full_name,email")
-            .eq("id", user.user.id)
-            .maybeSingle()
-        : { data: null };
-      const notes = parseCandidateNotes(candidate.notes);
-      const note: CandidateNote = {
-        id: crypto.randomUUID(),
-        text,
-        author:
-          profile?.full_name ||
-          profile?.email ||
-          user.user?.email ||
-          "HireX",
-        createdAt: new Date().toISOString(),
-      };
-
-      const result = await supabase
-        .from("candidates")
-        .update({
-          notes: serializeCandidateNotes([...notes, note]),
-        })
-        .eq("ID", candidateId);
-
-      if (result.error) {
-        throw new Error(result.error.message);
-      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your recruiter session has expired.");
+      const response = await fetch(`/api/recruiter/candidates/${candidateId}/notes`, { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" }, body: JSON.stringify({ body: text }) });
+      const result = await response.json() as { notes?: string; error?: string };
+      if (!response.ok || !result.notes) throw new Error(result.error || "Unable to save note.");
 
       setCandidates((current) =>
         current.map((item) =>
           getCandidateDbId(item) === candidateId
             ? {
                 ...item,
-                notes: serializeCandidateNotes([...notes, note]),
+                notes: result.notes,
               }
             : item
         )
@@ -1149,9 +1201,10 @@ export default function RecruiterCandidatesPage() {
               <p className="text-sm font-semibold text-purple-100">Parse resumes into the candidate pool</p>
               <p className="mt-1 text-xs text-white/40">Create unassigned candidates from extracted resume contact details.</p>
             </div>
-            <button type="button" onClick={() => setUploadModalOpen(true)} className="inline-flex w-fit items-center gap-2 rounded-xl bg-purple-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-purple-400">
-              <Upload size={16} /> Upload & Parse
+            <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setUploadModalOpen(true); resumeInputRef.current?.click(); }} className="relative z-10 inline-flex w-fit items-center gap-2 rounded-xl bg-purple-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-purple-400">
+              <Upload size={16} /> Upload &amp; Parse
             </button>
+            <input ref={resumeInputRef} type="file" multiple accept="application/pdf,.pdf,application/msword,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,text/plain,.txt,.md,.rtf" onChange={handleUploadSelection} className="sr-only" aria-label="Choose resume files" />
           </div>
         </section>
 
@@ -1186,26 +1239,6 @@ export default function RecruiterCandidatesPage() {
             </button>
           </div>
         )}
-
-        <div className="mb-5 grid gap-3 sm:grid-cols-3">
-          <SummaryCard
-            icon={<Users size={18} />}
-            label="Total Candidates"
-            value={candidates.length}
-          />
-
-          <SummaryCard
-            icon={<Filter size={18} />}
-            label="Showing"
-            value={filteredCandidates.length}
-          />
-
-          <SummaryCard
-            icon={<Check size={18} />}
-            label="Selected"
-            value={selectedIds.length}
-          />
-        </div>
 
         <section className="mb-5 rounded-2xl border border-white/10 bg-white/[0.025] p-4">
           <div className="flex flex-col gap-3 xl:flex-row">
@@ -1773,8 +1806,36 @@ export default function RecruiterCandidatesPage() {
         </section>
       </div>
 
-      {selectedCandidate && (
+      {(selectedCandidate || uploadModalOpen) && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm">
+          {selectedCandidate && (
+            <CandidateProfile
+              candidate={selectedCandidate}
+              applications={applications}
+              jobs={jobs}
+              resumeUrl={resumeUrl}
+              statusOptions={STATUS_OPTIONS}
+              status={selectedCandidate.status || "new"}
+              statusClass={statusClass}
+              formatStatus={formatStatus}
+              onStatusChange={(status) => updateCandidateStatus(selectedCandidate, status)}
+              onOpenResume={() => selectedCandidate.resume_path ? openResume(selectedCandidate.resume_path) : undefined}
+              onClose={closeProfile}
+              onPrevious={goToPreviousCandidate}
+              onNext={goToNextCandidate}
+              index={selectedCandidateIndex ?? undefined}
+              count={filteredCandidates.length}
+              jobContext={(() => {
+                const application = applications.find((item) => item.candidate_id === getCandidateDbId(selectedCandidate) && item.job_id);
+                const job = jobs.find((item) => item.id === (application?.job_id || selectedCandidate.job_id));
+                return job || selectedCandidate.job_title
+                  ? { title: job?.title || selectedCandidate.job_title || "Assigned job", company: job?.company, application }
+                  : undefined;
+              })()}
+            />
+          )}
+          {selectedCandidate && (
+          false &&
           <div className="flex h-full w-full items-center justify-center p-4">
             <div className="flex h-[92vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#080910] shadow-2xl">
 
@@ -1942,6 +2003,16 @@ export default function RecruiterCandidatesPage() {
                     </div>
 
                     <div>
+                      <p className="text-xs text-white/25">Current Company</p>
+                      <p className="mt-1 text-sm text-white/70">{selectedCandidate.current_company || "—"}</p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-white/25">Location</p>
+                      <p className="mt-1 text-sm text-white/70">{selectedCandidate.location || "—"}</p>
+                    </div>
+
+                    <div>
                       <p className="text-xs text-white/25">
                         Assigned Job
                       </p>
@@ -2040,6 +2111,8 @@ export default function RecruiterCandidatesPage() {
             </div>
           </div>
 
+          )}
+
           {uploadModalOpen && (
             <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-4 backdrop-blur-md" onClick={() => !processingUploads && !confirmingImports && setUploadModalOpen(false)}>
               <section className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/15 bg-[#0b0d16] shadow-2xl" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="resume-import-title">
@@ -2053,12 +2126,11 @@ export default function RecruiterCandidatesPage() {
                 </div>
 
                 <div className="flex-1 space-y-5 overflow-y-auto p-5 sm:p-7">
-                  <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-purple-300/30 bg-purple-300/[0.04] px-5 py-7 text-center transition hover:bg-purple-300/[0.08]">
+                  <button type="button" onClick={() => resumeInputRef.current?.click()} className="flex w-full cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-purple-300/30 bg-purple-300/[0.04] px-5 py-7 text-center transition hover:bg-purple-300/[0.08]">
                     <Upload size={24} className="text-purple-200" />
                     <span className="mt-3 text-sm font-semibold text-white/85">Choose resume files</span>
-                    <span className="mt-1 text-xs text-white/40">Text files parse here. PDF, DOC, and DOCX are listed with an exact blocker.</span>
-                    <input type="file" multiple accept="application/pdf,.pdf,application/msword,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,text/plain,.txt,.md,.rtf" onChange={handleUploadSelection} className="sr-only" />
-                  </label>
+                    <span className="mt-1 text-xs text-white/40">Select a resume to parse it, review the extracted fields, then confirm import.</span>
+                  </button>
 
                   {uploadItems.length === 0 ? (
                     <div className="rounded-xl border border-white/10 bg-white/[0.02] px-5 py-10 text-center text-sm text-white/35">No files selected yet.</div>
@@ -2069,7 +2141,7 @@ export default function RecruiterCandidatesPage() {
                         <tbody className="divide-y divide-white/10">
                           {uploadItems.map((item) => {
                             const parsed = item.parsed;
-                            const stateLabel = item.state === "ready" ? "Ready" : item.state === "parsing" ? "Parsing" : item.state === "parsed" ? "Parsed" : item.state === "unsupported" ? "Unsupported" : item.state === "failed" ? "Failed" : item.state === "duplicate" ? "Duplicate" : item.state === "updated" ? "Updated" : "Skipped";
+                            const stateLabel = item.state === "ready" ? "File selected" : item.state === "parsing" ? "Parsing..." : item.state === "parsed" ? "Parsing complete" : item.state === "unsupported" ? "Parsing failed" : item.state === "failed" ? "Parsing failed" : item.state === "duplicate" ? "Duplicate" : item.state === "updated" ? "Import successful" : "Skipped";
                             const stateClass = item.state === "parsed" || item.state === "updated" ? "text-green-300" : item.state === "duplicate" ? "text-yellow-300" : item.state === "unsupported" || item.state === "failed" ? "text-red-300" : "text-white/55";
                             return <tr key={item.id} className="align-top">
                               <td className="max-w-[220px] px-4 py-4"><p className="truncate font-medium text-white/80">{item.file.name}</p><p className="mt-1 text-white/30">{Math.ceil(item.file.size / 1024)} KB</p></td>
@@ -2079,8 +2151,10 @@ export default function RecruiterCandidatesPage() {
                                   <input aria-label={`${item.file.name} name`} value={parsed.name || ""} onChange={(event) => updateUploadField(item.id, "name", event.target.value)} placeholder="Full name" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50" />
                                   <input aria-label={`${item.file.name} email`} value={parsed.email || ""} onChange={(event) => updateUploadField(item.id, "email", event.target.value)} placeholder="Email (required)" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50" />
                                   <input aria-label={`${item.file.name} phone`} value={parsed.phone || ""} onChange={(event) => updateUploadField(item.id, "phone", event.target.value)} placeholder="Phone" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50" />
+                                  <input aria-label={`${item.file.name} current job title`} value={parsed.currentJobTitle || ""} onChange={(event) => updateUploadField(item.id, "currentJobTitle", event.target.value)} placeholder="Current or professional title" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50 sm:col-span-2" />
+                                  <input aria-label={`${item.file.name} current company`} value={parsed.currentCompany || ""} onChange={(event) => updateUploadField(item.id, "currentCompany", event.target.value)} placeholder="Current company" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50" />
                                   <input aria-label={`${item.file.name} location`} value={parsed.location || ""} onChange={(event) => updateUploadField(item.id, "location", event.target.value)} placeholder="Location" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50" />
-                                  <input aria-label={`${item.file.name} skills`} value={parsed.skills.join(", ")} onChange={(event) => updateUploadField(item.id, "skills", event.target.value)} placeholder="Skills, comma separated" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50 sm:col-span-2" />
+                                  <input aria-label={`${item.file.name} LinkedIn`} value={parsed.linkedin || ""} onChange={(event) => updateUploadField(item.id, "linkedin", event.target.value)} placeholder="LinkedIn URL" className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none focus:border-purple-400/50" />
                                 </div> : <span className="text-white/25">Review available after parsing.</span>}
                               </td>
                               <td className="px-4 py-4"><div className="flex flex-wrap gap-2">{(item.state === "failed" || item.state === "unsupported") && <button type="button" onClick={() => void retryUpload(item)} className="rounded-lg border border-white/10 px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.08]">Retry</button>}{item.state !== "skipped" && item.state !== "parsed" && <button type="button" onClick={() => skipUpload(item.id)} className="rounded-lg border border-white/10 px-2.5 py-1.5 text-[11px] text-white/50 hover:bg-white/[0.08]">Skip</button>}{item.state === "parsed" && <button type="button" onClick={() => skipUpload(item.id)} className="rounded-lg border border-white/10 px-2.5 py-1.5 text-[11px] text-white/50 hover:bg-white/[0.08]">Skip</button>}</div></td>
@@ -2095,8 +2169,8 @@ export default function RecruiterCandidatesPage() {
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 px-5 py-4 sm:px-7">
                   <p className="text-xs text-white/40">{uploadItems.filter((item) => item.state === "parsed").length} ready to import · No candidate is created until confirmation.</p>
                   <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={() => void uploadAndParseResumes()} disabled={!uploadItems.some((item) => item.state === "ready" || item.state === "failed" || item.state === "unsupported") || processingUploads || confirmingImports} className="inline-flex items-center gap-2 rounded-xl border border-purple-300/25 bg-purple-300/10 px-4 py-2.5 text-sm font-semibold text-purple-100 hover:bg-purple-300/20 disabled:opacity-40">{processingUploads && <Loader2 size={15} className="animate-spin" />}Start Parsing</button>
-                    <button type="button" onClick={() => void confirmImports()} disabled={!uploadItems.some((item) => item.state === "parsed") || processingUploads || confirmingImports} className="inline-flex items-center gap-2 rounded-xl bg-purple-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-purple-400 disabled:opacity-40">{confirmingImports && <Loader2 size={15} className="animate-spin" />}Confirm Import</button>
+                    <button type="button" onClick={() => void uploadAndParseResumes()} disabled={!uploadItems.some((item) => item.state === "ready" || item.state === "failed" || item.state === "unsupported") || processingUploads || confirmingImports} className="inline-flex items-center gap-2 rounded-xl border border-purple-300/25 bg-purple-300/10 px-4 py-2.5 text-sm font-semibold text-purple-100 hover:bg-purple-300/20 disabled:opacity-40">{processingUploads && <Loader2 size={15} className="animate-spin" />}Parse Selected Files</button>
+                    <button type="button" onClick={() => void confirmImports()} disabled={!uploadItems.some((item) => item.state === "parsed") || processingUploads || confirmingImports} className="inline-flex items-center gap-2 rounded-xl bg-purple-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-purple-400 disabled:opacity-40">{confirmingImports && <Loader2 size={15} className="animate-spin" />}{confirmingImports ? "Importing..." : "Confirm Import"}</button>
                   </div>
                 </div>
               </section>
@@ -2172,36 +2246,6 @@ export default function RecruiterCandidatesPage() {
         </div>
       )}
     </main>
-  );
-}
-
-function SummaryCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: number;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">
-      <div className="flex items-center gap-3">
-        <div className="rounded-xl bg-purple-400/10 p-2.5 text-purple-200">
-          {icon}
-        </div>
-
-        <div>
-          <p className="text-[11px] uppercase tracking-wider text-white/30">
-            {label}
-          </p>
-
-          <p className="mt-1 text-2xl font-semibold">
-            {value}
-          </p>
-        </div>
-      </div>
-    </div>
   );
 }
 

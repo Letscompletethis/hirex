@@ -66,40 +66,16 @@ export default function UsersPage() {
 
       setCurrentUserId(user.id);
 
-      const {
-        data: currentProfile,
-        error: currentProfileError,
-      } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single();
-
-      if (currentProfileError) {
-        throw currentProfileError;
-      }
-
-      setCurrentUserRole(
-        (currentProfile?.role || "") as UserRole | ""
-      );
-
-      const {
-        data,
-        error: usersError,
-      } = await supabase
-        .from("profiles")
-        .select(
-          "id,email,full_name,role,status,created_at"
-        )
-        .order("created_at", {
-          ascending: false,
-        });
-
-      if (usersError) {
-        throw usersError;
-      }
-
-      setUsers((data || []) as HireXUser[]);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your session has expired.");
+      const response = await fetch("/api/recruiter/users", { headers: { Authorization: `Bearer ${session.access_token}` } });
+      const result = await response.json() as { users?: HireXUser[]; error?: string };
+      if (!response.ok) throw new Error(result.error || "Unable to load users.");
+      const loadedUsers = result.users || [];
+      const currentProfile = loadedUsers.find((candidate) => candidate.id === user.id);
+      if (!currentProfile) throw new Error("Your HireX profile is unavailable.");
+      setCurrentUserRole(currentProfile.role);
+      setUsers(loadedUsers);
     } catch (err) {
       console.error("Load users error:", err);
 

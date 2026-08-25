@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { allocateJobCandidateNumber } from "../../../lib/job-candidate-number";
+import { normalizeJobStatus } from "../../../lib/statuses";
+import { parseResumeFile } from "../../../lib/server-resume-parser";
+
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -65,19 +68,12 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const jobId = String(formData.get("jobId") || "").trim();
-    const firstName = String(formData.get("firstName") || "").trim();
-    const lastName = String(formData.get("lastName") || "").trim();
-    const email = String(formData.get("email") || "").trim().toLowerCase();
-    const phone = String(formData.get("phone") || "").trim();
-    const currentJobTitle = String(formData.get("currentJobTitle") || "").trim();
+    let firstName = String(formData.get("firstName") || "").trim();
+    let lastName = String(formData.get("lastName") || "").trim();
+    let email = String(formData.get("email") || "").trim().toLowerCase();
+    let phone = String(formData.get("phone") || "").trim();
+    let currentJobTitle = String(formData.get("currentJobTitle") || "").trim();
     const resume = formData.get("resume");
-
-    if (!jobId || !firstName || !lastName || !email || !phone) {
-      return NextResponse.json(
-        { error: "All required application fields must be provided." },
-        { status: 400 }
-      );
-    }
 
     if (!(resume instanceof File) || resume.size === 0) {
       return NextResponse.json(
@@ -93,18 +89,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!jobId) {
+      return NextResponse.json({ error: "A job is required." }, { status: 400 });
+    }
+
+    try {
+      const parsed = await parseResumeFile(resume);
+      firstName ||= parsed.firstName || "";
+      lastName ||= parsed.lastName || "";
+      email ||= parsed.email || "";
+      phone ||= parsed.phone || "";
+      currentJobTitle ||= parsed.currentJobTitle || "";
+    } catch {
+      // Manual fields remain valid when a PDF has no extractable text.
+    }
+
+    if (!firstName || !lastName || !email || !phone) {
+      return NextResponse.json(
+        { error: "Name, email, and phone must be provided or readable from the resume." },
+        { status: 400 }
+      );
+    }
+
     const { data: job, error: jobError } = await supabaseAdmin
       .from("jobs")
       .select("id,title,status")
       .eq("id", jobId)
-      .eq("status", "published")
       .maybeSingle();
 
     if (jobError) {
       throw new Error(jobError.message);
     }
 
-    if (!job) {
+    if (!job || normalizeJobStatus(job.status) !== "open") {
       return NextResponse.json(
         { error: "This job is no longer available." },
         { status: 404 }
@@ -192,6 +209,25 @@ export async function POST(request: NextRequest) {
 
       candidate = createdCandidate as CandidateRecord;
       createdCandidateId = getDatabaseId(candidate);
+
+      const { error: versionError } = await supabaseAdmin
+        .from("candidate_resume_versions")
+        .insert({
+          candidate_id: candidate.candidate_id,
+          file_name: resume.name,
+          storage_path: resumePath,
+          mime_type: resume.type || "application/pdf",
+          document_type: "resume",
+          is_current: true,
+        });
+      if (versionError) throw new Error(`Could not record resume version: ${versionError.message}`);
+
+      const { error: eventError } = await supabaseAdmin.from("candidate_activity_events").insert([
+        { candidate_id: candidate.candidate_id, actor_id: null, event_type: "candidate_created", metadata: { source: "public_application" } },
+        { candidate_id: candidate.candidate_id, actor_id: null, event_type: "resume_uploaded", metadata: { file_name: resume.name } },
+        { candidate_id: candidate.candidate_id, actor_id: null, event_type: "resume_parsed", metadata: { fields: ["firstName", "lastName", "email", "phone", "currentJobTitle"] } },
+      ]);
+      if (eventError) throw new Error(`Could not record candidate history: ${eventError.message}`);
     }
 
     const candidateDatabaseId = getDatabaseId(candidate);
@@ -211,7 +247,7 @@ export async function POST(request: NextRequest) {
         .insert({
           candidate_id: candidateDatabaseId,
           job_id: job.id,
-          status: "new",
+          status: "submission",
           job_candidate_number: jobCandidateNumber,
         })
         .select("id")

@@ -9,6 +9,7 @@ import {
   type ApplicationSummary,
 } from "../../../lib/application-display";
 import {
+  isSubmittedApplicationStatus,
   normalizeApplicationStatus,
   type ApplicationStatus,
 } from "../../../lib/statuses";
@@ -74,13 +75,17 @@ export default function RecruiterActivityPage({ status }: { status: ApplicationS
       .channel(`recruiter-activity-${status}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "applications" }, () => void loadActivity())
       .subscribe();
+    const refreshTimer = window.setInterval(() => void loadActivity(), 15000);
 
-    return () => { void supabase.removeChannel(channel); };
+    return () => {
+      window.clearInterval(refreshTimer);
+      void supabase.removeChannel(channel);
+    };
   }, [status]);
 
   const filtered = useMemo(() => items.filter((item) => {
     const haystack = `${item.candidate_id || ""} ${item.job_id || ""} ${item.job_candidate_number || ""}`.toLowerCase();
-    return normalizeApplicationStatus(item.status) === status && (!recruiterFilter || item.recruiter_id === recruiterFilter) && haystack.includes(query.toLowerCase()) && inDateRange(item.applied_at, dateRange, customFrom, customTo);
+    return (status === "submission" ? isSubmittedApplicationStatus(item.status) : normalizeApplicationStatus(item.status) === status) && (!recruiterFilter || item.recruiter_id === recruiterFilter) && haystack.includes(query.toLowerCase()) && inDateRange(item.applied_at, dateRange, customFrom, customTo);
   }), [items, status, recruiterFilter, query, dateRange, customFrom, customTo]);
 
   function clearFilters() {

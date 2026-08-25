@@ -29,8 +29,11 @@ import {
   formatJobStatus,
   JOB_STATUSES,
   normalizeApplicationStatus,
+  normalizeStoredApplicationStatus,
   normalizeJobStatus as normalizeCanonicalJobStatus,
 } from "../../../lib/statuses";
+import { transitionApplicationStatus } from "../../../lib/application-transition";
+import CandidateProfile from "../components/CandidateProfile";
 
 type Job = {
   id: string;
@@ -173,6 +176,7 @@ function RecruiterJobsContent() {
   const [loading, setLoading] = useState(true);
   const [candidateLoading, setCandidateLoading] =
     useState(false);
+  const [resumeUrl, setResumeUrl] = useState("");
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -323,6 +327,18 @@ function RecruiterJobsContent() {
       loadJobs();
       loadCandidateData();
     });
+  }, []);
+
+  useEffect(() => {
+    const refresh = () => { void loadJobs(); void loadCandidateData(); };
+    const channel = supabase
+      .channel("recruiter-jobs-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "candidates" }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "applications" }, refresh)
+      .subscribe();
+    const timer = window.setInterval(refresh, 15000);
+    return () => { window.clearInterval(timer); void supabase.removeChannel(channel); };
   }, []);
 
   /*
@@ -783,6 +799,10 @@ function RecruiterJobsContent() {
         )
       );
 
+      let candidateUpdate = await supabase.from("candidates").update({ status: "viewed" }).eq("ID", candidateIdForDatabase(candidate));
+      if (candidateUpdate.error) candidateUpdate = await supabase.from("candidates").update({ status: "viewed" }).eq("id", candidateIdForDatabase(candidate));
+      if (candidateUpdate.error) console.error("Could not mark candidate viewed:", candidateUpdate.error);
+
       return;
     }
 
@@ -817,6 +837,12 @@ function RecruiterJobsContent() {
         ...current,
         data as Application,
       ]);
+    }
+    const candidateDatabaseId = candidateIdForDatabase(candidate);
+    if (candidateDatabaseId) {
+      let candidateUpdate = await supabase.from("candidates").update({ status: "viewed" }).eq("ID", candidateDatabaseId);
+      if (candidateUpdate.error) candidateUpdate = await supabase.from("candidates").update({ status: "viewed" }).eq("id", candidateDatabaseId);
+      if (candidateUpdate.error) console.error("Could not mark candidate viewed:", candidateUpdate.error);
     }
   }
 
@@ -947,30 +973,24 @@ function RecruiterJobsContent() {
             selectedJob.id
           );
 
-        const { error: updateError } =
-          await supabase
-            .from("applications")
-            .update({
-              status: newStatus,
-              job_candidate_number: jobCandidateNumber,
-            })
-            .eq(
-              "id",
-              application.id
-            );
+        await transitionApplicationStatus(
+          supabase,
+          application.id,
+          normalizeStoredApplicationStatus(newStatus)
+        );
 
-        if (updateError) {
-          throw new Error(
-            updateError.message
-          );
-        }
+        const { error: numberError } = await supabase
+          .from("applications")
+          .update({ job_candidate_number: jobCandidateNumber })
+          .eq("id", application.id);
+        if (numberError) throw new Error(numberError.message);
 
         setApplications((current) =>
           current.map((item) =>
             item.id === application?.id
               ? {
                   ...item,
-                  status: newStatus,
+                  status: normalizeStoredApplicationStatus(newStatus),
                   job_candidate_number: jobCandidateNumber,
                 }
               : item
@@ -1009,7 +1029,7 @@ function RecruiterJobsContent() {
               candidate_id:
                 databaseCandidateId,
               job_id: selectedJob.id,
-              status: newStatus,
+              status: normalizeStoredApplicationStatus(newStatus),
               job_candidate_number: jobCandidateNumber,
             })
             .select("*")
@@ -1037,18 +1057,6 @@ function RecruiterJobsContent() {
        * We intentionally do NOT update the candidate's
        * global status in Supabase.
        */
-
-      setCandidates((current) =>
-        current.map((item) =>
-          getCandidateId(item) ===
-          candidateId
-            ? {
-                ...item,
-                status: newStatus,
-              }
-            : item
-        )
-      );
 
       setSuccess(
         `${getCandidateName(
@@ -1119,11 +1127,7 @@ function RecruiterJobsContent() {
         );
       }
 
-      window.open(
-        data.signedUrl,
-        "_blank",
-        "noopener,noreferrer"
-      );
+      setResumeUrl(data.signedUrl);
     } catch (err) {
       console.error(
         "Resume error:",
@@ -1549,6 +1553,31 @@ function RecruiterJobsContent() {
     selectedJob &&
     selectedCandidate
   ) {
+    return (
+      <CandidateProfile
+        candidate={selectedCandidate}
+        applications={applications}
+        jobs={jobs}
+        resumeUrl={resumeUrl}
+        statusOptions={SUBMISSION_STATUSES}
+        status={candidateStatus(selectedCandidate)}
+        statusClass={candidateStatusClass}
+        formatStatus={formatStatus}
+        onStatusChange={(status) => updateCandidateStatus(selectedCandidate, status)}
+        onOpenResume={() => openResume(selectedCandidate)}
+        onClose={backToJobPool}
+        onPrevious={previousCandidate}
+        onNext={nextCandidate}
+        index={selectedCandidateIndex}
+        count={jobCandidates.length}
+        jobContext={{
+          title: selectedJob.title || "Untitled job",
+          company: selectedJob.company,
+          application: getCandidateApplication(selectedCandidate),
+        }}
+      />
+    );
+
     const fullName =
       getCandidateName(
         selectedCandidate

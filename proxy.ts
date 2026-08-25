@@ -1,5 +1,6 @@
 ﻿import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isActiveProfileStatus, isPrivilegedRole, isRecruiterRole, normalizeRole } from "./lib/roles";
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({
@@ -50,6 +51,8 @@ export async function proxy(request: NextRequest) {
     pathname === "/recruiter/recruiters" ||
     pathname.startsWith("/recruiter/recruiters/") ||
     pathname === "/recruiter/users";
+  const isOwnerBusinessDevelopmentRoute =
+    pathname === "/recruiter/business-development";
 
   // Protect recruiter pages
   if (isRecruiterRoute && !isPublicAuthPage && !user) {
@@ -68,14 +71,18 @@ export async function proxy(request: NextRequest) {
       .eq("id", user.id)
       .maybeSingle();
 
-    const role = String(profile?.role || "").toLowerCase();
-    const status = String(profile?.status || "").toLowerCase();
-    const isRecruiter = ["owner", "admin", "super_admin", "recruiter"].includes(
-      role
-    );
-    const isActive = !status || status === "active";
+    const role = normalizeRole(profile?.role);
+    const isRecruiter = isRecruiterRole(role);
+    const isActive = isActiveProfileStatus(profile?.status);
 
-    if (isRecruiterManagementRoute && !["owner", "admin", "super_admin"].includes(role)) {
+    if (isRecruiterManagementRoute && !isPrivilegedRole(role)) {
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = "/recruiter";
+      loginUrl.searchParams.set("error", "forbidden");
+      return NextResponse.redirect(loginUrl);
+    }
+
+    if (isOwnerBusinessDevelopmentRoute && role !== "owner") {
       const loginUrl = request.nextUrl.clone();
       loginUrl.pathname = "/recruiter";
       loginUrl.searchParams.set("error", "forbidden");

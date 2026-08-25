@@ -48,6 +48,17 @@ export function normalizeApplicationStatus(
   return "submission";
 }
 
+export function normalizeStoredApplicationStatus(value: string | null | undefined) {
+  const status = (value || "submission").toLowerCase().trim();
+  if (status === "new" || status === "viewed") return status;
+  return normalizeApplicationStatus(status);
+}
+
+export function isSubmittedApplicationStatus(value: string | null | undefined) {
+  const status = (value || "").toLowerCase().trim();
+  return status === "submission" || status === "submitted";
+}
+
 export function normalizeStatus(value: string | null | undefined): ApplicationStatus {
   return normalizeApplicationStatus(value);
 }

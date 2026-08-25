@@ -14,10 +14,9 @@ import {
   PauseCircle,
   Lock,
   ArrowRight,
-  UserRound,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
-import { normalizeApplicationStatus as normalizeSharedApplicationStatus } from "../../lib/statuses";
+import { isSubmittedApplicationStatus, normalizeApplicationStatus as normalizeSharedApplicationStatus } from "../../lib/statuses";
 
 type Job = {
   id: string;
@@ -165,6 +164,8 @@ export default function RecruiterDashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applications, setApplications] =
     useState<Application[]>([]);
+  const [newCandidateCount, setNewCandidateCount] =
+    useState(0);
   const [candidateCount, setCandidateCount] =
     useState(0);
 
@@ -298,7 +299,7 @@ export default function RecruiterDashboard() {
       const candidatesRequest =
         await supabase
           .from("candidates")
-          .select("ID,candidate_id,first_name,last_name");
+          .select("ID,candidate_id,first_name,last_name,status");
 
       if (candidatesRequest.error) {
         throw new Error(
@@ -308,8 +309,9 @@ export default function RecruiterDashboard() {
 
       const candidatesData = candidatesRequest.data || [];
 
-      setCandidateCount(
-        candidatesData.length
+      setCandidateCount(candidatesData.length);
+      setNewCandidateCount(
+        candidatesData.filter((candidate) => String(candidate.status || "new").toLowerCase().trim() === "new").length
       );
 
       setJobs(jobsData);
@@ -343,8 +345,12 @@ export default function RecruiterDashboard() {
       .on("postgres_changes", { event: "*", schema: "public", table: "candidates" }, () => void loadDashboard())
       .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, () => void loadDashboard())
       .subscribe();
+    const refreshTimer = window.setInterval(() => void loadDashboard(), 15000);
 
-    return () => { void supabase.removeChannel(channel); };
+    return () => {
+      window.clearInterval(refreshTimer);
+      void supabase.removeChannel(channel);
+    };
   }, []);
 
   const filteredApplications =
@@ -437,7 +443,7 @@ export default function RecruiterDashboard() {
     useMemo(() => {
       return {
         submission: recruiterApplications.filter(
-          (application) => normalizeSharedApplicationStatus(application.status) === "submission"
+          (application) => isSubmittedApplicationStatus(application.status)
         ).length,
         interview: recruiterApplications.filter(
           (application) => normalizeSharedApplicationStatus(application.status) === "interview"
@@ -453,50 +459,6 @@ export default function RecruiterDashboard() {
         ).length,
       };
     }, [recruiterApplications]);
-
-  const recruiterJobs = useMemo(() => {
-    if (isPrivilegedUser) {
-      return jobs;
-    }
-
-    const assignedJobIds = new Set(
-      recruiterApplications.map((application) => application.job_id)
-    );
-
-    return jobs.filter((job) => assignedJobIds.has(job.id));
-  }, [jobs, isPrivilegedUser, recruiterApplications]);
-
-  const recruiterSubmissions =
-    recruiterApplications.filter(
-      (application) =>
-        normalizeSharedApplicationStatus(
-          application.status
-        ) === "submission"
-    ).length;
-
-  const recruiterInterviews =
-    recruiterApplications.filter(
-      (application) =>
-        normalizeSharedApplicationStatus(
-          application.status
-        ) === "interview"
-    ).length;
-
-  const recruiterOffers =
-    recruiterApplications.filter(
-      (application) =>
-        normalizeSharedApplicationStatus(
-          application.status
-        ) === "offer"
-    ).length;
-
-  const recruiterStarts =
-    recruiterApplications.filter(
-      (application) =>
-        normalizeSharedApplicationStatus(
-          application.status
-        ) === "start"
-    ).length;
 
   return (
     <main className="min-h-screen bg-[#03040a] text-white">
@@ -755,9 +717,18 @@ export default function RecruiterDashboard() {
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
                 <DashboardStatLink
                   href="/recruiter/candidates"
-                  label="Candidates Pool"
+                  label="Candidate Pool"
                   value={candidateCount}
                   description="All candidates"
+                  icon={<Users size={20} />}
+                  accent="blue"
+                />
+
+                <DashboardStatLink
+                  href="/recruiter/candidates?status=new"
+                  label="New"
+                  value={newCandidateCount}
+                  description="New or unviewed candidates"
                   icon={
                     <Users size={20} />
                   }
@@ -841,97 +812,6 @@ export default function RecruiterDashboard() {
               </div>
             </section>
 
-            <section className="mt-8 rounded-3xl border border-white/10 bg-white/[0.025] p-6">
-              <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">
-                    Recruiter Activity
-                  </h2>
-
-                  <p className="mt-1 text-xs text-white/35">
-                    Your jobs, submissions and hiring
-                    activity
-                  </p>
-                </div>
-
-                <Link
-                  href="/recruiter/recruiters"
-                  className="inline-flex w-fit items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/50 transition hover:bg-white/[0.07] hover:text-white"
-                >
-                  <UserRound size={14} />
-                  View Recruiters
-                </Link>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                <DashboardStatLink
-                  href="/recruiter/recruiters"
-                  label="Recruiter Jobs"
-                  value={
-                    recruiterJobs.length
-                  }
-                  description="Jobs assigned to you"
-                  icon={
-                    <BriefcaseBusiness
-                      size={18}
-                    />
-                  }
-                />
-
-                <DashboardStatLink
-                  href="/recruiter/recruiters"
-                  label="Submissions"
-                  value={
-                    recruiterSubmissions
-                  }
-                  description="Your submissions"
-                  icon={
-                    <FileText size={18} />
-                  }
-                  accent="blue"
-                />
-
-                <DashboardStatLink
-                  href="/recruiter/recruiters"
-                  label="Interviews"
-                  value={
-                    recruiterInterviews
-                  }
-                  description="Your interviews"
-                  icon={
-                    <CalendarDays
-                      size={18}
-                    />
-                  }
-                  accent="yellow"
-                />
-
-                <DashboardStatLink
-                  href="/recruiter/recruiters"
-                  label="Offer"
-                  value={recruiterOffers}
-                  description="Your offer count"
-                  icon={
-                    <FileText size={18} />
-                  }
-                  accent="orange"
-                />
-
-                <DashboardStatLink
-                  href="/recruiter/recruiters"
-                  label="Start"
-                  value={recruiterStarts}
-                  description="Your start count"
-                  icon={
-                    <CheckCircle2
-                      size={18}
-                    />
-                  }
-                  accent="green"
-                />
-              </div>
-            </section>
-
             <section className="mt-6 rounded-3xl border border-white/10 bg-white/[0.025] p-6">
               <div className="mb-6">
                 <h2 className="text-lg font-semibold">
@@ -1006,6 +886,12 @@ export default function RecruiterDashboard() {
                     <ArrowRight
                       size={14}
                     />
+                  </Link>
+                  <Link
+                    href="/recruiter/recruiters"
+                    className="ml-2 inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/[0.06]"
+                  >
+                    View Recruiters
                   </Link>
                 </div>
               </section>

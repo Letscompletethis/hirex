@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { isPrivilegedRole } from "../../../../lib/roles";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabasePublishableKey =
@@ -78,7 +79,7 @@ async function getAuthorizedUser(request: NextRequest) {
     profile.role || ""
   ).toLowerCase();
 
-  if (role !== "owner" && role !== "admin") {
+  if (!isPrivilegedRole(role)) {
     throw new Error("FORBIDDEN");
   }
 
@@ -465,7 +466,7 @@ export async function PATCH(
   request: NextRequest
 ) {
   try {
-    const { user: currentUser } =
+    const { user: currentUser, role: currentRole } =
       await getAuthorizedUser(request);
 
     const body = await request.json();
@@ -536,7 +537,7 @@ export async function PATCH(
     }
 
     if (
-      currentUser.user_metadata?.role !== "owner" &&
+      currentRole !== "owner" &&
       targetUser.role !== "recruiter"
     ) {
       return NextResponse.json(

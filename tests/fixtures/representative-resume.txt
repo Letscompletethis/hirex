@@ -1,0 +1,20 @@
+Avery Morgan
+Senior Platform Engineer
+avery.morgan@example.com
++1 (415) 555-0137
+linkedin.com/in/avery-morgan
+
+EXPERIENCE
+Senior Platform Engineer
+Northstar Systems
+2022 - Present
+Platform Engineer
+Blue River Labs
+2019 - 2022
+
+EDUCATION
+B.S. Computer Science
+State University
+Graduated 2019
+
+SKILLS: TypeScript, Node.js, PostgreSQL

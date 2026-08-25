@@ -5,6 +5,6 @@
   "description": "Send profile information you explicitly enter or select to HireX.",
   "action": { "default_popup": "popup.html" },
   "background": { "service_worker": "background.js" },
-  "permissions": ["storage"],
-  "host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"]
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": ["https://www.linkedin.com/*", "https://hirex.vercel.app/*", "http://localhost/*", "http://127.0.0.1/*"]
 }

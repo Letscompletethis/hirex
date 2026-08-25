@@ -4,7 +4,7 @@
 <body>
   <main>
     <h1>Import to HireX</h1>
-    <p>Enter information you selected and provide yourself. This extension does not read or scrape LinkedIn pages.</p>
+    <p>On a supported LinkedIn profile, HireX reads only information visible in the rendered page. Review it before importing.</p>
     <label>HireX API URL <input id="apiUrl" type="url" placeholder="https://your-hirex.example.com"></label>
     <label>Bearer token <input id="token" type="password" autocomplete="off"></label>
     <label>First name <input id="firstName" autocomplete="given-name"></label>
@@ -12,7 +12,9 @@
     <label>Email <input id="email" type="email" autocomplete="email" required></label>
     <label>Phone <input id="phone" type="tel" autocomplete="tel"></label>
     <label>Current job title <input id="currentJobTitle"></label>
-    <button id="import" type="button">Import selected information</button>
+    <label>LinkedIn profile URL <input id="linkedinProfileUrl" type="url" readonly></label>
+    <button id="detect" type="button">Detect visible profile information</button>
+    <button id="import" type="button">Import reviewed information</button>
     <output id="result" role="status"></output>
   </main>
   <script src="popup.js"></script>
