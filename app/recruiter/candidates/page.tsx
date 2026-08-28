@@ -154,8 +154,11 @@ export default function RecruiterCandidatesPage() {
   const [notesPanelOpen, setNotesPanelOpen] = useState(false);
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
   const resumeInputRef = useRef<HTMLInputElement>(null);
+  const loadingCandidatesRef = useRef(false);
 
   async function loadCandidates() {
+    if (loadingCandidatesRef.current) return;
+    loadingCandidatesRef.current = true;
     setLoading(true);
     setError("");
 
@@ -252,7 +255,7 @@ export default function RecruiterCandidatesPage() {
                 const candidateNumber = existingCandidate.candidate_id || await allocateCandidateNumber(supabase);
                 await uploadResumeToDrive(item.file, existingCandidate.candidate_id || existingId);
                 const nameParts = (parsed.name || "").trim().split(/\s+/).filter(Boolean);
-                const updateValues = { candidate_id: candidateNumber, first_name: nameParts[0] || null, last_name: nameParts.slice(1).join(" ") || null, phone: parsed.phone, current_job_title: parsed.currentJobTitle };
+                const updateValues = { candidate_id: candidateNumber, first_name: nameParts[0] || null, last_name: nameParts.slice(1).join(" ") || null, phone: parsed.phone, current_job_title: parsed.currentJobTitle, current_company: parsed.currentCompany, location: parsed.location, experience: typeof parsed.experience === "string" ? parsed.experience : null, skills: parsed.skills, education: parsed.education?.[0] || { degree: parsed.degree, institution: parsed.institution, graduationInformation: parsed.graduationInformation }, linkedin_profile_url: parsed.linkedinUrl };
                 let updated = await supabase.from("candidates").update(updateValues).eq("ID", existingId);
                 if (updated.error) updated = await supabase.from("candidates").update(updateValues).eq("id", existingId);
                 if (updated.error) throw new Error(updated.error.message);
@@ -353,6 +356,7 @@ export default function RecruiterCandidatesPage() {
       console.error("Recruiter candidates error:", err);
       setError(err instanceof Error ? err.message : "Could not load candidate pool.");
     } finally {
+      loadingCandidatesRef.current = false;
       setLoading(false);
     }
   }
@@ -2058,7 +2062,7 @@ export default function RecruiterCandidatesPage() {
 
                     <div className="grid grid-cols-2 gap-2">
                       <button type="button" onClick={() => setNotesPanelOpen(true)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-purple-400/20 bg-purple-400/[0.06] px-3 py-2.5 text-xs text-purple-100 hover:bg-purple-400/[0.12]"><StickyNote size={14} /> Notes</button>
-                      <button type="button" onClick={() => setHistoryPanelOpen(true)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-xs text-white/70 hover:bg-white/[0.08] hover:text-white"><History size={14} /> History</button>
+                      <button type="button" onClick={() => { setNotesPanelOpen(true); setHistoryPanelOpen(false); }} className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-xs text-white/70 hover:bg-white/[0.08] hover:text-white"><History size={14} /> History</button>
                     </div>
                   </div>
                 </aside>
@@ -2182,7 +2186,7 @@ export default function RecruiterCandidatesPage() {
 
           {(notesPanelOpen || historyPanelOpen) && (
             <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm" onClick={() => { setNotesPanelOpen(false); setHistoryPanelOpen(false); }}>
-              <aside className="absolute right-0 top-0 flex h-full w-full max-w-xl flex-col border-l border-white/10 bg-[#0a0b12]/95 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+              <aside className="mx-auto mt-12 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-2xl border border-white/10 bg-[#0a0b12]/95 shadow-2xl" onClick={(event) => event.stopPropagation()}>
                 <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.2em] text-purple-200/70">{notesPanelOpen ? "Notes" : "History"}</p>
@@ -2211,6 +2215,16 @@ export default function RecruiterCandidatesPage() {
                     <div className="border-t border-white/10 pt-4">
                       <textarea value={noteText} onChange={(event) => setNoteText(event.target.value)} placeholder="Write a note..." rows={4} className="w-full resize-none rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-purple-400/40" />
                       <button type="button" disabled={savingNote || !noteText.trim()} onClick={() => addCandidateNote(selectedCandidate)} className="mt-2 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40">{savingNote ? "Saving..." : "Add Note"}</button>
+                    </div>
+                    <div className="border-t border-white/10 pt-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-purple-200/70">History</p>
+                      <div className="mt-3 space-y-3">
+                        {applications.filter((application) => application.candidate_id === getCandidateDbId(selectedCandidate)).map((application) => (
+                          <div key={`history-application-${application.id}`} className="rounded-xl border border-white/10 bg-white/[0.03] p-3"><p className="text-sm text-white/75">Application {application.job_id || ""}</p><p className="mt-1 text-xs text-white/35">{application.applied_at ? new Date(application.applied_at).toLocaleString() : ""}</p></div>
+                        ))}
+                        {selectedCandidate.viewed_at && <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3"><p className="text-sm text-white/75">Profile viewed</p><p className="mt-1 text-xs text-white/35">{new Date(selectedCandidate.viewed_at).toLocaleString()}</p></div>}
+                        {parseCandidateNotes(selectedCandidate.notes).flatMap((note) => [note.createdAt ? <div key={`${note.id}-created`} className="rounded-xl border border-white/10 bg-white/[0.03] p-3"><p className="text-sm text-white/75">Note added by {note.author}</p><p className="mt-1 text-xs text-white/35">{new Date(note.createdAt).toLocaleString()}</p></div> : null, note.editedAt ? <div key={`${note.id}-edited`} className="rounded-xl border border-white/10 bg-white/[0.03] p-3"><p className="text-sm text-white/75">Note edited by {note.author}</p><p className="mt-1 text-xs text-white/35">{new Date(note.editedAt).toLocaleString()}</p></div> : null])}
+                      </div>
                     </div>
                   </div>
                 ) : (

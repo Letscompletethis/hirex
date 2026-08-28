@@ -48,6 +48,7 @@ type Job = {
   deadline: string | null;
   created_at: string | null;
   updated_at?: string | null;
+  recruiter_id?: string | null;
 };
 
 type Candidate = {
@@ -360,7 +361,7 @@ function RecruiterJobsContent() {
   const selectedJobRecruiterIds = useMemo(() => {
     if (!selectedJob) return [];
 
-    return Array.from(
+    return (Array.from(
       new Set(
         applications
           .filter((application) =>
@@ -369,7 +370,7 @@ function RecruiterJobsContent() {
           .map((application) => application.recruiter_id)
           .filter(Boolean)
       )
-    ) as string[];
+    ) as string[]).concat(selectedJob.recruiter_id ? [selectedJob.recruiter_id] : []);
   }, [applications, selectedJob]);
 
   async function assignRecruiterToJob() {
@@ -385,16 +386,22 @@ function RecruiterJobsContent() {
       .map((application) => application.id)
       .filter(Boolean) as string[];
 
-    if (applicationIds.length === 0) {
-      setError("This job has no applications to assign yet.");
-      return;
-    }
-
     setAssigningRecruiter(true);
     setError("");
     setSuccess("");
 
-    const { error: updateError } = await supabase
+    const { error: jobUpdateError } = await supabase
+      .from("jobs")
+      .update({ recruiter_id: recruiterId })
+      .eq("id", selectedJob.id);
+
+    if (jobUpdateError) {
+      setError(jobUpdateError.message);
+      setAssigningRecruiter(false);
+      return;
+    }
+
+    const { error: updateError } = applicationIds.length === 0 ? { error: null } : await supabase
       .from("applications")
       .update({ recruiter_id: recruiterId })
       .in("id", applicationIds);
@@ -409,6 +416,7 @@ function RecruiterJobsContent() {
             : application
         )
       );
+      setJobs((current) => current.map((job) => job.id === selectedJob.id ? { ...job, recruiter_id: recruiterId } : job));
       setSuccess("Recruiter assigned to this job's applications.");
     }
 

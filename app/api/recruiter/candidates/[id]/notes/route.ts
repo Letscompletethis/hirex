@@ -25,15 +25,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const body = await request.json() as { body?: string; applicationId?: string };
   const text = body.body?.trim();
   if (!text) return NextResponse.json({ error: "Note text is required." }, { status: 400 });
-  const { data: candidate, error: candidateError } = await current.admin.from("candidates").select("ID,id,notes").or(`ID.eq.${id},id.eq.${id}`).maybeSingle();
+  const { data: candidate, error: candidateError } = await current.admin.from("candidates").select("ID,notes").eq("ID", id).maybeSingle();
   if (candidateError) return NextResponse.json({ error: candidateError.message }, { status: 500 });
   if (!candidate) return NextResponse.json({ error: "Candidate not found." }, { status: 404 });
-  const databaseId = String(candidate.ID || candidate.id || id);
+  const databaseId = String(candidate.ID || id);
   const note: CandidateNote = { id: crypto.randomUUID(), text, author: current.profile.full_name || current.profile.email || current.user.email || "HireX", createdAt: new Date().toISOString() };
   const { error: noteError } = await current.admin.from("candidate_notes").insert({ candidate_id: databaseId, application_id: body.applicationId || null, author_id: current.user.id, body: text });
   if (noteError) return NextResponse.json({ error: noteError.message }, { status: 500 });
   const notes = [...parseCandidateNotes(candidate.notes), note];
-  const { error: updateError } = await current.admin.from("candidates").update({ notes: serializeCandidateNotes(notes) }).or(`ID.eq.${id},id.eq.${id}`);
+  const { error: updateError } = await current.admin.from("candidates").update({ notes: serializeCandidateNotes(notes) }).eq("ID", databaseId);
   if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 });
   await current.admin.from("candidate_activity_events").insert({ candidate_id: databaseId, application_id: body.applicationId || null, actor_id: current.user.id, event_type: "note_added", metadata: { note_id: note.id } });
   return NextResponse.json({ note, notes: serializeCandidateNotes(notes) }, { status: 201 });

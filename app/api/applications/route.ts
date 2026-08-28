@@ -31,6 +31,11 @@ type CandidateRecord = {
   id?: string;
   candidate_id?: string | null;
   resume_path?: string | null;
+  current_company?: string | null;
+  location?: string | null;
+  experience?: string | null;
+  skills?: string[] | null;
+  education?: Record<string, unknown> | null;
 };
 
 function getDatabaseId(candidate: CandidateRecord) {
@@ -75,6 +80,12 @@ export async function POST(request: NextRequest) {
     let email = String(formData.get("email") || "").trim().toLowerCase();
     let phone = String(formData.get("phone") || "").trim();
     let currentJobTitle = String(formData.get("currentJobTitle") || "").trim();
+    let currentCompany = "";
+    let location = "";
+    let experience = "";
+    let skills: string[] = [];
+    let education: Record<string, unknown> | null = null;
+    let linkedinProfileUrl = "";
     const resume = formData.get("resume");
 
     if (!(resume instanceof File) || resume.size === 0) {
@@ -106,6 +117,12 @@ export async function POST(request: NextRequest) {
       email ||= parsed.email || "";
       phone ||= parsed.phone || "";
       currentJobTitle ||= parsed.currentJobTitle || "";
+      currentCompany = parsed.currentCompany || "";
+      location = parsed.location || "";
+      experience = typeof parsed.experience === "string" ? parsed.experience : "";
+      skills = parsed.skills || [];
+      education = parsed.education?.[0] || (parsed.degree ? { degree: parsed.degree, institution: parsed.institution, graduationInformation: parsed.graduationInformation } : null);
+      linkedinProfileUrl = parsed.linkedinUrl || "";
     } catch {
       // Manual fields remain valid when a PDF has no extractable text.
     }
@@ -187,6 +204,12 @@ export async function POST(request: NextRequest) {
             job_id: job.id,
             job_title: job.title,
             current_job_title: currentJobTitle || null,
+            current_company: currentCompany || null,
+            location: location || null,
+            experience: experience || null,
+            skills,
+            education,
+            linkedin_profile_url: linkedinProfileUrl || null,
             status: "new",
           })
           .select("*")
@@ -267,7 +290,7 @@ export async function POST(request: NextRequest) {
           .insert({
             candidate_id: candidate.candidate_id || "",
             file_name: uploadResult.fileName,
-            drive_file_id: uploadResult.fileId,
+            drive_file_id: uploadResult.candidateFileId,
             drive_folder_id: uploadResult.candidateFolderId,
             mime_type: resume.type || "application/octet-stream",
             document_type: "resume",

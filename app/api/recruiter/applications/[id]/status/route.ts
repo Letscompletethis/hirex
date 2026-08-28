@@ -44,6 +44,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 });
 
   if (String(application.status) !== nextStatus) {
+    await actor.admin
+      .from("candidates")
+      .update({ status: nextStatus })
+      .eq("ID", application.candidate_id);
+
     const { error: eventError } = await actor.admin.from("candidate_activity_events").insert({
       candidate_id: application.candidate_id,
       application_id: application.id,

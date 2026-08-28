@@ -14,6 +14,7 @@ export interface UploadedResume {
   candidateFolderId: string;
   jobApplicationsFolderId: string;
   fileId: string;
+  candidateFileId: string;
   fileName: string;
   webViewLink?: string;
 }
@@ -126,14 +127,18 @@ export async function uploadResumeToJobAndCandidate(
 
     if (!candidateUploadResponse.ok) {
       const errorBody = await candidateUploadResponse.json() as { error?: { message?: string } };
-      console.error("[drive-candidate-upload]", errorBody.error?.message || "Upload to candidate folder failed");
-      // Non-blocking: candidate folder upload failure does not prevent app submission
+      throw new Error(errorBody.error?.message || "Upload to candidate folder failed");
+    }
+    const candidateUploadedFile = await candidateUploadResponse.json() as { id?: string };
+    if (!candidateUploadedFile.id) {
+      throw new Error("Drive did not return a candidate-folder file ID after upload");
     }
 
     return {
       candidateFolderId,
       jobApplicationsFolderId,
       fileId,
+      candidateFileId: candidateUploadedFile.id,
       fileName,
       webViewLink: uploadedFile.webViewLink,
     };
