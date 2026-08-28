@@ -46,7 +46,7 @@ export default function ApplyPage() {
       setLoadingJob(true);
 
       const { data, error: jobError } = await supabase
-        .from("jobs")
+        .from("public_jobs")
         .select("id,job_id,title,company,status")
         .eq("id", id)
         .in("status", ["published", "active", "open"])
@@ -241,7 +241,7 @@ export default function ApplyPage() {
               </span>{" "}
               at{" "}
               <span className="text-white/70">
-                {job.company}
+                Confidential Client
               </span>{" "}
               has been submitted successfully.
             </p>
@@ -288,7 +288,7 @@ export default function ApplyPage() {
           </h1>
 
           <p className="mt-3 text-sm text-white/45">
-            {job.company} · {job.job_id}
+            Confidential Client · {job.job_id}
           </p>
 
         </div>

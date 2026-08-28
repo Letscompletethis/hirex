@@ -20,6 +20,7 @@ create table if not exists public.jobs (
   job_id text,
   title text not null,
   company text not null,
+  recruiter_id uuid references public.profiles(id) on delete set null,
   client_id uuid,
   location text not null,
   type text not null,
@@ -116,7 +117,11 @@ begin
     new.id,
     new.email,
     coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name'),
-    'recruiter',
+    case
+      when lower(coalesce(new.raw_user_meta_data ->> 'role', '')) in ('owner', 'admin', 'super_admin', 'recruiter')
+        then lower(new.raw_user_meta_data ->> 'role')
+      else 'recruiter'
+    end,
     'active',
     false
   )
@@ -574,3 +579,34 @@ alter table public.google_drive_connections
   add column if not exists root_folder_id text,
   add column if not exists jobs_folder_id text,
   add column if not exists candidates_folder_id text;
+
+-- Migration: 20260828000003_public_jobs_and_recruiter_assignment.sql
+alter table public.jobs
+  add column if not exists recruiter_id uuid references public.profiles(id) on delete set null;
+
+create index if not exists jobs_recruiter_id_idx
+  on public.jobs (recruiter_id);
+
+revoke select on public.jobs from anon;
+
+create or replace view public.public_jobs as
+select
+  id,
+  job_id,
+  title,
+  'Confidential Client'::text as company,
+  location,
+  type,
+  experience,
+  description,
+  responsibilities,
+  qualifications,
+  status,
+  openings,
+  salary,
+  deadline,
+  created_at
+from public.jobs
+where lower(status) in ('published', 'active', 'open');
+
+grant select on public.public_jobs to anon, authenticated;

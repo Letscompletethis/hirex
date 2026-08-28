@@ -1090,13 +1090,6 @@ function RecruiterJobsContent() {
   async function openResume(
     candidate: Candidate
   ) {
-    if (!candidate.resume_path) {
-      setError(
-        "No resume is stored for this candidate."
-      );
-      return;
-    }
-
     try {
       /*
        * Mark Viewed first.
@@ -1109,17 +1102,18 @@ function RecruiterJobsContent() {
         );
       }
 
-      const { data, error } =
-        await supabase.storage
-          .from("resumes")
-          .createSignedUrl(
-            candidate.resume_path,
-            3600
-          );
+      const keys = [candidate.ID, candidate.id, candidate.candidate_id].filter(Boolean) as string[];
+      const { data, error } = await supabase
+        .from("candidate_documents")
+        .select("web_view_link")
+        .in("candidate_id", keys)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
       if (
         error ||
-        !data?.signedUrl
+        !data?.web_view_link
       ) {
         throw new Error(
           error?.message ||
@@ -1127,7 +1121,7 @@ function RecruiterJobsContent() {
         );
       }
 
-      setResumeUrl(data.signedUrl);
+      setResumeUrl(data.web_view_link);
     } catch (err) {
       console.error(
         "Resume error:",
@@ -1910,13 +1904,10 @@ function RecruiterJobsContent() {
                   />
 
                   <p className="mt-4 text-sm text-white/40">
-                    {selectedCandidate.resume_path
-                      ? "Resume available"
-                      : "No resume uploaded"}
+                    Google Drive resume
                   </p>
 
-                  {selectedCandidate.resume_path && (
-                    <button
+                  <button
                       type="button"
                       onClick={() =>
                         openResume(
@@ -1930,7 +1921,6 @@ function RecruiterJobsContent() {
                       />
                       View resume
                     </button>
-                  )}
 
                 </div>
 

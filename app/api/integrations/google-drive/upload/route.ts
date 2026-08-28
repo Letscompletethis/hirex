@@ -63,6 +63,23 @@ export async function POST(request: NextRequest) {
 
     if (documentInsert.error) throw new Error(documentInsert.error.message);
 
+    await admin
+      .from("candidate_resume_versions")
+      .update({ is_current: false })
+      .eq("candidate_id", databaseCandidateId)
+      .eq("is_current", true);
+
+    const versionInsert = await admin.from("candidate_resume_versions").insert({
+      candidate_id: databaseCandidateId,
+      file_name: result.file.name,
+      drive_file_id: result.file.id,
+      drive_folder_id: result.candidateFolderId,
+      mime_type: result.file.mimeType,
+      document_type: "resume",
+      is_current: true,
+    });
+    if (versionInsert.error && versionInsert.error.code !== "23505") throw new Error(versionInsert.error.message);
+
     return NextResponse.json({
       ...result,
       document: documentInsert.data,

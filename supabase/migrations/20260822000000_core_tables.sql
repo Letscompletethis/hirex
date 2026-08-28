@@ -14,6 +14,7 @@ create table if not exists public.jobs (
   job_id text,
   title text not null,
   company text not null,
+  recruiter_id uuid references public.profiles(id) on delete set null,
   client_id uuid,
   location text not null,
   type text not null,
@@ -64,6 +65,8 @@ create index if not exists jobs_status_created_at_idx
   on public.jobs (status, created_at desc);
 create index if not exists jobs_client_id_idx
   on public.jobs (client_id);
+create index if not exists jobs_recruiter_id_idx
+  on public.jobs (recruiter_id);
 create index if not exists candidates_email_idx
   on public.candidates (email);
 create index if not exists candidates_job_id_idx
@@ -110,7 +113,11 @@ begin
     new.id,
     new.email,
     coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name'),
-    'recruiter',
+    case
+      when lower(coalesce(new.raw_user_meta_data ->> 'role', '')) in ('owner', 'admin', 'super_admin', 'recruiter')
+        then lower(new.raw_user_meta_data ->> 'role')
+      else 'recruiter'
+    end,
     'active',
     false
   )

@@ -212,6 +212,22 @@ export default function RecruiterCandidatesPage() {
         await parseResumeItems([item]);
       }
 
+      async function uploadResumeToDrive(file: File, candidateId: string) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("Your recruiter session has expired.");
+        const formData = new FormData();
+        formData.append("candidateId", candidateId);
+        formData.append("file", file);
+        const response = await fetch("/api/integrations/google-drive/upload", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          body: formData,
+        });
+        const result = await response.json() as { error?: string; file?: { id?: string } };
+        if (!response.ok) throw new Error(result.error || "Could not upload resume to Google Drive.");
+        return result;
+      }
+
       async function confirmImports() {
         const importable = uploadItems.filter((item) => item.state === "parsed" && item.parsed);
         if (!importable.length) return;
@@ -233,12 +249,10 @@ export default function RecruiterCandidatesPage() {
               if (existingCandidate) {
                 const existingId = existingCandidate.ID || existingCandidate.id || "";
                 if (!existingId) throw new Error("Existing candidate has no database ID.");
-                const resumePath = `${existingCandidate.candidate_id || existingId}/${Date.now()}-${crypto.randomUUID()}-${item.file.name}`;
-                const upload = await supabase.storage.from("resumes").upload(resumePath, item.file, { contentType: item.file.type || "application/octet-stream", upsert: false });
-                if (upload.error) throw new Error(`Resume upload failed: ${upload.error.message}`);
                 const candidateNumber = existingCandidate.candidate_id || await allocateCandidateNumber(supabase);
+                await uploadResumeToDrive(item.file, existingCandidate.candidate_id || existingId);
                 const nameParts = (parsed.name || "").trim().split(/\s+/).filter(Boolean);
-                const updateValues = { candidate_id: candidateNumber, first_name: nameParts[0] || null, last_name: nameParts.slice(1).join(" ") || null, phone: parsed.phone, current_job_title: parsed.currentJobTitle, resume_path: resumePath };
+                const updateValues = { candidate_id: candidateNumber, first_name: nameParts[0] || null, last_name: nameParts.slice(1).join(" ") || null, phone: parsed.phone, current_job_title: parsed.currentJobTitle };
                 let updated = await supabase.from("candidates").update(updateValues).eq("ID", existingId);
                 if (updated.error) updated = await supabase.from("candidates").update(updateValues).eq("id", existingId);
                 if (updated.error) throw new Error(updated.error.message);
@@ -248,15 +262,10 @@ export default function RecruiterCandidatesPage() {
               }
               if (knownEmails.has(email)) throw new Error(`${email} already exists.`);
               const candidateId = await allocateCandidateNumber(supabase);
-              const resumePath = `${candidateId}/${Date.now()}-${crypto.randomUUID()}-${item.file.name}`;
-              const upload = await supabase.storage.from("resumes").upload(resumePath, item.file, { contentType: item.file.type || "application/octet-stream", upsert: false });
-              if (upload.error) throw new Error(`Resume upload failed: ${upload.error.message}`);
               const nameParts = (parsed.name || "").trim().split(/\s+/).filter(Boolean);
-              const created = await supabase.from("candidates").insert({ candidate_id: candidateId, first_name: nameParts[0] || null, last_name: nameParts.slice(1).join(" ") || null, email, phone: parsed.phone, current_job_title: parsed.currentJobTitle, resume_path: resumePath, status: "new" }).select("*").single();
-              if (created.error) {
-                await supabase.storage.from("resumes").remove([resumePath]);
-                throw new Error(created.error.message);
-              }
+              const created = await supabase.from("candidates").insert({ candidate_id: candidateId, first_name: nameParts[0] || null, last_name: nameParts.slice(1).join(" ") || null, email, phone: parsed.phone, current_job_title: parsed.currentJobTitle, status: "new" }).select("*").single();
+              if (created.error) throw new Error(created.error.message);
+              await uploadResumeToDrive(item.file, candidateId);
               knownEmails.add(email);
               createdCount += 1;
               setUploadItems((previous) => previous.map((current) => current.id === item.id ? { ...current, state: "updated", candidateId, message: `Created ${candidateId}.` } : current));
@@ -580,6 +589,22 @@ export default function RecruiterCandidatesPage() {
     }
   }
 
+  async function uploadResumeToDrive(file: File, candidateId: string) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("Your recruiter session has expired.");
+    const formData = new FormData();
+    formData.append("candidateId", candidateId);
+    formData.append("file", file);
+    const response = await fetch("/api/integrations/google-drive/upload", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      body: formData,
+    });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) throw new Error(result.error || "Could not upload resume to Google Drive.");
+    return result;
+  }
+
   async function confirmImports() {
     const importable = uploadItems.filter((item) => item.state === "parsed" && item.parsed);
     if (!importable.length) return;
@@ -611,16 +636,9 @@ export default function RecruiterCandidatesPage() {
             return;
           }
           const candidateId = await allocateCandidateNumber(supabase);
-          const resumePath = `${candidateId}/${Date.now()}-${crypto.randomUUID()}-${item.file.name}`;
-          const upload = await supabase.storage.from("resumes").upload(resumePath, item.file, { contentType: item.file.type || "application/octet-stream", upsert: false });
-          if (upload.error) throw new Error(`Resume upload failed: ${upload.error.message}`);
-          const created = await supabase.from("candidates").insert({ candidate_id: candidateId, first_name: parsed.firstName, last_name: parsed.lastName, email, phone: parsed.phone, current_job_title: parsed.currentJobTitle, current_company: parsed.currentCompany, linkedin_profile_url: parsed.linkedinUrl, location: parsed.location, experience: parsed.experience, skills: parsed.skills, education: { degree: parsed.degree, institution: parsed.institution, graduationInformation: parsed.graduationInformation }, resume_path: resumePath, status: "new" }).select("*").single();
-          if (created.error) {
-            await supabase.storage.from("resumes").remove([resumePath]);
-            throw new Error(created.error.message);
-          }
-          const version = await supabase.from("candidate_resume_versions").insert({ candidate_id: candidateId, file_name: item.file.name, storage_path: resumePath, mime_type: item.file.type || "application/octet-stream", document_type: "resume", is_current: true });
-          if (version.error) throw new Error(`Could not record resume version: ${version.error.message}`);
+          const created = await supabase.from("candidates").insert({ candidate_id: candidateId, first_name: parsed.firstName, last_name: parsed.lastName, email, phone: parsed.phone, current_job_title: parsed.currentJobTitle, current_company: parsed.currentCompany, linkedin_profile_url: parsed.linkedinUrl, location: parsed.location, experience: parsed.experience, skills: parsed.skills, education: { degree: parsed.degree, institution: parsed.institution, graduationInformation: parsed.graduationInformation }, status: "new" }).select("*").single();
+          if (created.error) throw new Error(created.error.message);
+          await uploadResumeToDrive(item.file, candidateId);
           const event = await supabase.from("candidate_activity_events").insert([
             { candidate_id: candidateId, event_type: "candidate_created", metadata: { source: "resume_import" } },
             { candidate_id: candidateId, event_type: "resume_uploaded", metadata: { file_name: item.file.name } },
@@ -788,40 +806,29 @@ export default function RecruiterCandidatesPage() {
       );
     }
 
-    if (candidate.resume_path) {
-      await openResume(candidate.resume_path);
-    }
+    await openResume(candidate);
   }
 
-  async function openResume(path: string) {
+  async function openResume(candidate: Candidate) {
     try {
-      const finalPath = path;
+      const keys = [candidate.ID, candidate.id, candidate.candidate_id].filter(Boolean) as string[];
+      const { data, error } = await supabase
+        .from("candidate_documents")
+        .select("web_view_link")
+        .in("candidate_id", keys)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      if (
-        finalPath.startsWith("http://") ||
-        finalPath.startsWith("https://")
-      ) {
-        setResumeUrl(finalPath);
-        return;
-      }
-
-      const { data, error } =
-        await supabase.storage
-          .from("resumes")
-          .createSignedUrl(
-            finalPath,
-            60 * 60
-          );
-
-      if (error || !data?.signedUrl) {
+      if (error || !data?.web_view_link) {
         setError(
           error?.message ||
-            "Unable to open resume."
+            "No Google Drive document is available."
         );
         return;
       }
 
-      setResumeUrl(data.signedUrl);
+      setResumeUrl(data.web_view_link);
     } catch (err) {
       console.error(
         "Resume error:",
@@ -1009,9 +1016,7 @@ export default function RecruiterCandidatesPage() {
       );
     }
 
-    if (candidate.resume_path) {
-      openResume(candidate.resume_path);
-    }
+    void openResume(candidate);
   }
 
   function goToNextCandidate() {
@@ -1051,9 +1056,7 @@ export default function RecruiterCandidatesPage() {
       );
     }
 
-    if (candidate.resume_path) {
-      openResume(candidate.resume_path);
-    }
+    void openResume(candidate);
   }
 
   function clearFilters() {
@@ -1700,7 +1703,7 @@ export default function RecruiterCandidatesPage() {
                             </td>
 
                             <td className="px-4 py-4">
-                              {candidate.resume_path ? (
+                              {candidate.candidate_id ? (
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -1819,7 +1822,7 @@ export default function RecruiterCandidatesPage() {
               statusClass={statusClass}
               formatStatus={formatStatus}
               onStatusChange={(status) => updateCandidateStatus(selectedCandidate, status)}
-              onOpenResume={() => selectedCandidate.resume_path ? openResume(selectedCandidate.resume_path) : undefined}
+              onOpenResume={() => openResume(selectedCandidate)}
               onClose={closeProfile}
               onPrevious={goToPreviousCandidate}
               onNext={goToNextCandidate}

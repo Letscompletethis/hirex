@@ -405,42 +405,39 @@ export default function ApplicationsPage() {
     }
   }
 
-  async function openResume(
-    resumePath: string | null
-  ) {
-    if (!resumePath) {
+  async function openResume(candidate: Candidate | null) {
+    const candidateKeys = [candidate?.ID, candidate?.candidate_id].filter(Boolean) as string[];
+    if (!candidateKeys.length) {
       alert(
         "No resume is available for this candidate."
       );
       return;
     }
 
-    const { data, error: storageError } =
-      await supabase.storage
-        .from("resumes")
-        .createSignedUrl(resumePath, 600);
+    const { data, error: documentError } = await supabase
+      .from("candidate_documents")
+      .select("web_view_link,drive_file_id,created_at")
+      .in("candidate_id", candidateKeys)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    if (storageError) {
+    if (documentError || !data?.web_view_link) {
       console.error(
         "Resume error:",
-        storageError
+        documentError
       );
 
       alert(
         "Could not open resume: " +
-          storageError.message
+          (documentError?.message || "No Google Drive document is available.")
       );
 
       return;
     }
 
-    if (!data?.signedUrl) {
-      alert("Could not create a resume URL.");
-      return;
-    }
-
     window.open(
-      data.signedUrl,
+      data.web_view_link,
       "_blank",
       "noopener,noreferrer"
     );
@@ -780,10 +777,7 @@ export default function ApplicationsPage() {
                               <button
                                 type="button"
                                 onClick={() =>
-                                  openResume(
-                                    candidate?.resume_path ||
-                                      null
-                                  )
+                                  openResume(candidate)
                                 }
                                 className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-white/70 transition hover:bg-white/[0.08] hover:text-white"
                               >

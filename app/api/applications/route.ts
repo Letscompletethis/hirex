@@ -64,7 +64,6 @@ async function createAvailableCandidateId() {
 }
 
 export async function POST(request: NextRequest) {
-  let uploadedResumePath = "";
   let createdCandidateId = "";
   let createdApplicationId = "";
 
@@ -176,20 +175,6 @@ export async function POST(request: NextRequest) {
 
     if (!candidate) {
       const candidateId = await createAvailableCandidateId();
-      const resumePath = `${candidateId}/${Date.now()}-${crypto.randomUUID()}.pdf`;
-      uploadedResumePath = resumePath;
-
-      const { error: uploadError } = await supabaseAdmin.storage
-        .from("resumes")
-        .upload(resumePath, resume, {
-          contentType: "application/pdf",
-          upsert: false,
-        });
-
-      if (uploadError) {
-        throw new Error(`Resume upload failed: ${uploadError.message}`);
-      }
-
       const { data: createdCandidate, error: candidateError } =
         await supabaseAdmin
           .from("candidates")
@@ -199,7 +184,6 @@ export async function POST(request: NextRequest) {
             last_name: lastName,
             email,
             phone,
-            resume_path: resumePath,
             job_id: job.id,
             job_title: job.title,
             current_job_title: currentJobTitle || null,
@@ -216,18 +200,6 @@ export async function POST(request: NextRequest) {
 
       candidate = createdCandidate as CandidateRecord;
       createdCandidateId = getDatabaseId(candidate);
-
-      const { error: versionError } = await supabaseAdmin
-        .from("candidate_resume_versions")
-        .insert({
-          candidate_id: candidate.candidate_id,
-          file_name: resume.name,
-          storage_path: resumePath,
-          mime_type: resume.type || "application/pdf",
-          document_type: "resume",
-          is_current: true,
-        });
-      if (versionError) throw new Error(`Could not record resume version: ${versionError.message}`);
 
       const { error: eventError } = await supabaseAdmin.from("candidate_activity_events").insert([
         { candidate_id: candidate.candidate_id, actor_id: null, event_type: "candidate_created", metadata: { source: "public_application" } },
@@ -268,30 +240,26 @@ export async function POST(request: NextRequest) {
 
     createdApplicationId = createdApplication.id;
 
-    // Attempt to upload resume to Google Drive (non-blocking)
-    let driveStatus = "not_configured";
-    let driveError: string | null = null;
+    const driveStatus_ = await getGoogleDriveStatus();
+    if (!driveStatus_.configured || !driveStatus_.connected) {
+      throw new Error("Google Drive is not connected. Resume upload is required to submit an application.");
+    }
 
-    try {
-      const driveStatus_ = await getGoogleDriveStatus();
-      if (driveStatus_.configured && driveStatus_.connected) {
-        driveStatus = "uploading";
-        const candidateName = `${firstName} ${lastName}`.trim();
+    const candidateName = `${firstName} ${lastName}`.trim();
+    const hierarchy = await ensureHireXFolderStructure(
+      job.id,
+      job.title || "Untitled Job",
+      candidateName,
+      undefined
+    );
 
-        const hierarchy = await ensureHireXFolderStructure(
-          job.id,
-          job.title || "Untitled Job",
-          candidateName,
-          undefined // will use environment GOOGLE_DRIVE_REFRESH_TOKEN
-        );
-
-        const uploadResult = await uploadResumeToJobAndCandidate(
-          resume,
-          hierarchy.applicationsFolderId,
-          hierarchy.candidateFolderId,
-          candidateName,
-          undefined
-        );
+    const uploadResult = await uploadResumeToJobAndCandidate(
+      resume,
+      hierarchy.applicationsFolderId,
+      hierarchy.candidateFolderId,
+      candidateName,
+      undefined
+    );
 
         // Record the Drive file in candidate_documents
         const { error: docError } = await supabaseAdmin
@@ -306,11 +274,27 @@ export async function POST(request: NextRequest) {
           });
 
         if (docError) {
-          console.error("[drive-document-record]", docError.message);
-          driveError = `File uploaded but record failed: ${docError.message}`;
-        } else {
-          driveStatus = "uploaded";
+          throw new Error(`Drive file uploaded but metadata record failed: ${docError.message}`);
         }
+
+        await supabaseAdmin
+          .from("candidate_resume_versions")
+          .update({ is_current: false })
+          .eq("candidate_id", candidate.candidate_id || "")
+          .eq("is_current", true);
+
+        const { error: versionError } = await supabaseAdmin
+          .from("candidate_resume_versions")
+          .insert({
+            candidate_id: candidate.candidate_id || "",
+            file_name: uploadResult.fileName,
+            drive_file_id: uploadResult.fileId,
+            drive_folder_id: uploadResult.candidateFolderId,
+            mime_type: resume.type || "application/octet-stream",
+            document_type: "resume",
+            is_current: true,
+          });
+        if (versionError) throw new Error(`Could not record Drive resume version: ${versionError.message}`);
 
         // Update job and candidate with folder IDs
         if (!(job as Record<string, unknown>).drive_folder_id) {
@@ -337,13 +321,6 @@ export async function POST(request: NextRequest) {
             console.error("[drive-candidate-update]", candUpdateError.message);
           }
         }
-      }
-    } catch (driveErr) {
-      const driveErrorMsg = driveErr instanceof Error ? driveErr.message : "unknown error";
-      console.error("[application-drive-upload]", driveErrorMsg);
-      driveError = driveErrorMsg;
-      driveStatus = "failed";
-    }
 
     const applicationEmail = buildApplicationEmail({
       candidateName: `${firstName} ${lastName}`.trim(),
@@ -378,8 +355,7 @@ export async function POST(request: NextRequest) {
       applicationId: createdApplicationId,
       jobCandidateNumber,
       emailStatus: emailResult.ok ? "sent" : "logged",
-      driveStatus,
-      driveError: driveError || undefined,
+      driveStatus: "uploaded",
     });
   } catch (error) {
     if (createdApplicationId) {
@@ -401,12 +377,6 @@ export async function POST(request: NextRequest) {
           .delete()
           .eq("id", createdCandidateId);
       }
-    }
-
-    if (uploadedResumePath) {
-      await supabaseAdmin.storage
-        .from("resumes")
-        .remove([uploadedResumePath]);
     }
 
     console.error("Application creation error:", error);

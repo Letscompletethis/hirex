@@ -102,7 +102,7 @@ export default function NewJobPage() {
       return;
     }
 
-    const { error: insertError } = await supabase
+    const { data: createdJob, error: insertError } = await supabase
       .from("jobs")
       .insert({
         job_id: jobId,
@@ -121,8 +121,11 @@ export default function NewJobPage() {
         qualifications: qualifications
           .map((item) => item.trim())
           .filter(Boolean),
+        recruiter_id: selectedRecruiterId || null,
         status,
-      });
+      })
+      .select("id")
+      .single();
 
     if (insertError) {
       console.error(insertError);
@@ -131,44 +134,8 @@ export default function NewJobPage() {
       return;
     }
 
-    if (selectedRecruiterId) {
-      const { data: applications, error: applicationsError } =
-        await supabase
-          .from("applications")
-          .select("id,recruiter_id")
-          .eq("job_id", jobId);
-
-      if (applicationsError) {
-        console.error("Load applications for recruiter assignment error:", applicationsError);
-        setAssignmentNotice(
-          "Job created, but recruiter assignment is unavailable because this database does not expose application assignments. The selected recruiter was kept in this confirmation only and was not written to the job."
-        );
-      } else if (applications && applications.length > 0) {
-        const { error: assignmentError } = await supabase
-          .from("applications")
-          .update({ recruiter_id: selectedRecruiterId })
-          .eq("job_id", jobId);
-
-        if (assignmentError) {
-          console.error("Assign recruiter error:", assignmentError);
-          setAssignmentNotice(
-            "Job created, but recruiter assignment could not be saved on the existing applications. The selected recruiter was kept in this confirmation only."
-          );
-        } else {
-          setAssignmentNotice(
-            "The selected recruiter was assigned to the existing applications for this job."
-          );
-        }
-      } else {
-        setAssignmentNotice(
-          "Job created. No applications exist yet, so the selected recruiter was kept in this confirmation only. Assignments can be made after applications arrive."
-        );
-      }
-    }
-
-    if (selectedRecruiterId) {
-      setSaving(false);
-      return;
+    if (selectedRecruiterId && createdJob) {
+      setAssignmentNotice("The selected recruiter was saved to this job.");
     }
 
     router.push("/recruiter/jobs");

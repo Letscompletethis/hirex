@@ -49,7 +49,7 @@ export default function JobDetailsPage() {
       setError("");
 
       const { data, error: jobError } = await supabase
-        .from("jobs")
+        .from("public_jobs")
         .select(
           "id,job_id,title,company,location,type,experience,status,openings,salary,deadline,description,responsibilities,qualifications,created_at"
         )
