@@ -3,6 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 import { allocateJobCandidateNumber } from "../../../lib/job-candidate-number";
 import { normalizeJobStatus } from "../../../lib/statuses";
 import { parseResumeFile } from "../../../lib/server-resume-parser";
+import { buildApplicationEmail, sendTransactionalEmail } from "../../../lib/email";
+import { ensureHireXFolderStructure, uploadResumeToJobAndCandidate } from "../../../lib/drive-application-upload";
+import { getGoogleDriveStatus } from "../../../lib/google-drive";
 
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -82,9 +85,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (resume.type !== "application/pdf" || resume.size > 10 * 1024 * 1024) {
+    const isPdf = resume.type === "application/pdf" || resume.name.toLowerCase().endsWith(".pdf");
+    const isDocx = resume.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || resume.name.toLowerCase().endsWith(".docx");
+    const isText = resume.type.startsWith("text/") || /\.(txt|md|rtf)$/i.test(resume.name);
+
+    if ((!isPdf && !isDocx && !isText) || resume.size > 10 * 1024 * 1024) {
       return NextResponse.json(
-        { error: "Resume must be a PDF smaller than 10 MB." },
+        { error: "Resume must be a PDF, DOCX, or text file smaller than 10 MB." },
         { status: 400 }
       );
     }
@@ -261,10 +268,118 @@ export async function POST(request: NextRequest) {
 
     createdApplicationId = createdApplication.id;
 
+    // Attempt to upload resume to Google Drive (non-blocking)
+    let driveStatus = "not_configured";
+    let driveError: string | null = null;
+
+    try {
+      const driveStatus_ = await getGoogleDriveStatus();
+      if (driveStatus_.configured && driveStatus_.connected) {
+        driveStatus = "uploading";
+        const candidateName = `${firstName} ${lastName}`.trim();
+
+        const hierarchy = await ensureHireXFolderStructure(
+          job.id,
+          job.title || "Untitled Job",
+          candidateName,
+          undefined // will use environment GOOGLE_DRIVE_REFRESH_TOKEN
+        );
+
+        const uploadResult = await uploadResumeToJobAndCandidate(
+          resume,
+          hierarchy.applicationsFolderId,
+          hierarchy.candidateFolderId,
+          candidateName,
+          undefined
+        );
+
+        // Record the Drive file in candidate_documents
+        const { error: docError } = await supabaseAdmin
+          .from("candidate_documents")
+          .insert({
+            candidate_id: candidate.candidate_id || "",
+            file_name: uploadResult.fileName,
+            drive_file_id: uploadResult.fileId,
+            drive_folder_id: uploadResult.candidateFolderId,
+            mime_type: resume.type || "application/octet-stream",
+            document_type: "resume",
+          });
+
+        if (docError) {
+          console.error("[drive-document-record]", docError.message);
+          driveError = `File uploaded but record failed: ${docError.message}`;
+        } else {
+          driveStatus = "uploaded";
+        }
+
+        // Update job and candidate with folder IDs
+        if (!(job as Record<string, unknown>).drive_folder_id) {
+          const { error: jobUpdateError } = await supabaseAdmin
+            .from("jobs")
+            .update({
+              drive_folder_id: hierarchy.jobFolderId,
+              drive_applications_folder_id: hierarchy.applicationsFolderId,
+            })
+            .eq("id", job.id);
+
+          if (jobUpdateError) {
+            console.error("[drive-job-update]", jobUpdateError.message);
+          }
+        }
+
+        if (!(candidate as Record<string, unknown>).google_drive_folder_id) {
+          const { error: candUpdateError } = await supabaseAdmin
+            .from("candidates")
+            .update({ google_drive_folder_id: hierarchy.candidateFolderId })
+            .eq(getDatabaseId(candidate) === String(candidate.ID) ? "ID" : "id", candidateDatabaseId);
+
+          if (candUpdateError) {
+            console.error("[drive-candidate-update]", candUpdateError.message);
+          }
+        }
+      }
+    } catch (driveErr) {
+      const driveErrorMsg = driveErr instanceof Error ? driveErr.message : "unknown error";
+      console.error("[application-drive-upload]", driveErrorMsg);
+      driveError = driveErrorMsg;
+      driveStatus = "failed";
+    }
+
+    const applicationEmail = buildApplicationEmail({
+      candidateName: `${firstName} ${lastName}`.trim(),
+      email,
+      phone,
+      jobId: job.id,
+      jobTitle: job.title,
+      appliedAt: new Date().toISOString(),
+      candidateId: candidate.candidate_id || null,
+      applicationId: createdApplicationId,
+    });
+
+    const recipientEmail = process.env.HIREX_APPLICATION_EMAIL || "applicant@hirexstaffing.com";
+    const emailResult = await sendTransactionalEmail({
+      to: [{ email: recipientEmail }],
+      subject: applicationEmail.subject,
+      text: applicationEmail.text,
+      html: applicationEmail.html,
+      attachments: [{
+        filename: resume.name,
+        content: Buffer.from(await resume.arrayBuffer()),
+        contentType: resume.type || "application/octet-stream",
+      }],
+    });
+
+    if (!emailResult.ok) {
+      console.error("[application-email] failed to deliver application notification", emailResult.error);
+    }
+
     return NextResponse.json({
       candidateId: candidate.candidate_id || null,
       applicationId: createdApplicationId,
       jobCandidateNumber,
+      emailStatus: emailResult.ok ? "sent" : "logged",
+      driveStatus,
+      driveError: driveError || undefined,
     });
   } catch (error) {
     if (createdApplicationId) {

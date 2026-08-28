@@ -1,5 +1,8 @@
 "use client";
 
+/* eslint-disable react/no-unescaped-entities */
+
+import { useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -13,8 +16,11 @@ import {
 
 import AnimatedBackground from "../AnimatedBackground";
 import ThemeToggle from "../ThemeToggle";
+import { TalkToHirexModal } from "../components/TalkToHirexModal";
 
 export default function CandidatesPage() {
+  const [contactOpen, setContactOpen] = useState(false);
+
   return (
     <main className="relative min-h-screen overflow-x-hidden bg-[#03040a] text-white">
       {/* ANIMATED BACKGROUND */}
@@ -34,6 +40,7 @@ export default function CandidatesPage() {
       />
 
       <div className="relative z-10">
+        <TalkToHirexModal open={contactOpen} onClose={() => setContactOpen(false)} />
         {/* NAVIGATION */}
         <header className="fixed left-0 right-0 top-0 z-50 pointer-events-none px-4 pt-4 sm:px-6">
           <div
@@ -94,8 +101,9 @@ export default function CandidatesPage() {
 
             <div className="flex items-center gap-2">
               <ThemeToggle />
-              <Link
-                href="/#contact"
+              <button
+                type="button"
+                onClick={() => setContactOpen(true)}
                 className="
                 rounded-xl
                 bg-white
@@ -109,7 +117,7 @@ export default function CandidatesPage() {
               "
               >
                 Talk to HireX
-              </Link>
+              </button>
             </div>
           </div>
         </header>

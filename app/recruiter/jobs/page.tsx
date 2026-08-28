@@ -457,7 +457,7 @@ function RecruiterJobsContent() {
 
     const { error: updateError } = await supabase
       .from("jobs")
-      .update({ status: bulkStatus, updated_at: new Date().toISOString() })
+      .update({ status: bulkStatus })
       .in("id", selectedJobIds);
 
     if (updateError) {

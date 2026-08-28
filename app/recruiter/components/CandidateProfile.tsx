@@ -45,16 +45,65 @@ export default function CandidateProfile({ candidate, applications = [], jobs = 
     let cancelled = false;
     async function loadHistory() {
       const [{ data: noteRows }, { data: eventRows }] = await Promise.all([
-        supabase.from("candidate_notes").select("body,author_id,created_at,updated_at,application_id").eq("candidate_id", databaseId).is("deleted_at", null).order("created_at", { ascending: false }),
+        supabase.from("candidate_notes").select("id,body,author_id,created_at,updated_at,application_id").eq("candidate_id", databaseId).is("deleted_at", null).order("created_at", { ascending: false }),
         supabase.from("candidate_activity_events").select("event_type,old_value,new_value,metadata,created_at").eq("candidate_id", databaseId).order("created_at", { ascending: false }),
       ]);
       if (cancelled) return;
-      if (noteRows?.length) setSavedNotes(noteRows.map((note) => ({ id: crypto.randomUUID(), text: note.body, author: note.author_id || "HireX", createdAt: note.created_at, editedAt: note.updated_at || undefined })));
+      if (noteRows?.length) setSavedNotes(noteRows.map((note) => ({ id: note.id, text: note.body, author: note.author_id || "HireX", createdAt: note.created_at, editedAt: note.updated_at || undefined })));
       setEvents((eventRows || []) as typeof events);
     }
     void loadHistory();
     return () => { cancelled = true; };
   }, [databaseId]);
+
+    // Real-time subscription for activity events and notes
+    useEffect(() => {
+      if (!databaseId) return;
+      let cancelled = false;
+
+      // Subscribe to activity events
+      const eventSubscription = supabase
+        .channel(`candidate-events-${databaseId}`)
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "candidate_activity_events", filter: `candidate_id=eq.${databaseId}` },
+          (payload) => {
+            if (cancelled) return;
+            const newEvent = payload.new as typeof events[0];
+            setEvents((prev) => [newEvent, ...prev]);
+          }
+        )
+        .subscribe();
+
+      // Subscribe to notes
+      const noteSubscription = supabase
+        .channel(`candidate-notes-${databaseId}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "candidate_notes", filter: `candidate_id=eq.${databaseId}` },
+          async (payload) => {
+            if (cancelled) return;
+            const oldNote = payload.old as Record<string, unknown>;
+            const newNotePayload = payload.new as Record<string, unknown>;
+            if (payload.eventType === "DELETE" || newNotePayload.deleted_at) {
+              setSavedNotes((prev) => prev.filter((n) => n.id !== (oldNote.id || newNotePayload.id)));
+            } else if (payload.new) {
+              const newNote = { id: String(newNotePayload.id || crypto.randomUUID()), text: String(newNotePayload.body || ""), author: String(newNotePayload.author_id || "HireX"), createdAt: String(newNotePayload.created_at || ""), editedAt: newNotePayload.updated_at ? String(newNotePayload.updated_at) : undefined };
+              setSavedNotes((prev) => {
+                const existing = prev.findIndex((n) => n.id === newNote.id);
+                return existing >= 0 ? prev.map((n, i) => i === existing ? newNote : n) : [...prev, newNote];
+              });
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        cancelled = true;
+        void eventSubscription.unsubscribe();
+        void noteSubscription.unsubscribe();
+      };
+    }, [databaseId]);
   const timeline = [
     candidate.created_at ? { label: "Candidate record created", timestamp: candidate.created_at } : null,
     candidate.viewed_at ? { label: "Profile viewed", timestamp: candidate.viewed_at } : null,

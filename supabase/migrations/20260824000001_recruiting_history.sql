@@ -54,4 +54,4 @@ create policy "Recruiters read candidate activity"
     where profiles.id = auth.uid()
       and lower(profiles.role) in ('owner', 'admin', 'super_admin', 'recruiter')
       and (profiles.status is null or lower(profiles.status) = 'active')
-  )));
+  ));

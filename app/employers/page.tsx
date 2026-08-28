@@ -1,5 +1,8 @@
 "use client";
 
+/* eslint-disable @next/next/no-html-link-for-pages, react/no-unescaped-entities */
+
+import { useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -10,7 +13,6 @@ import {
   Globe2,
   Handshake,
   Layers3,
-  Search,
   ShieldCheck,
   Sparkles,
   Target,
@@ -20,8 +22,11 @@ import {
 
 import AnimatedBackground from "../AnimatedBackground";
 import ThemeToggle from "../ThemeToggle";
+import { TalkToHirexModal } from "../components/TalkToHirexModal";
 
 export default function EmployersPage() {
+  const [contactOpen, setContactOpen] = useState(false);
+
   return (
     <main className="relative min-h-screen overflow-x-hidden bg-[#03040a] text-white">
       {/* =====================================================
@@ -49,6 +54,7 @@ export default function EmployersPage() {
       ===================================================== */}
 
       <div className="relative z-10">
+        <TalkToHirexModal open={contactOpen} onClose={() => setContactOpen(false)} />
 
         {/* ===================================================
             NAVIGATION
@@ -119,8 +125,9 @@ export default function EmployersPage() {
 
             <div className="flex items-center gap-2">
               <ThemeToggle />
-              <a
-                href="#contact"
+              <button
+                type="button"
+                onClick={() => setContactOpen(true)}
                 className="
                 rounded-xl
                 bg-white
@@ -134,7 +141,7 @@ export default function EmployersPage() {
               "
               >
                 Talk to HireX
-              </a>
+              </button>
             </div>
           </div>
         </header>

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeGoogleDriveCode, GoogleDriveConfigurationError, HIREX_DRIVE_ACCOUNT, encryptDriveToken } from "../../../../../lib/google-drive";
+import { bootstrapGoogleDriveFolders, exchangeGoogleDriveCode, GoogleDriveConfigurationError, HIREX_DRIVE_ACCOUNT, encryptDriveToken } from "../../../../../lib/google-drive";
 import { getServiceRoleClient } from "../../../../../lib/integration-auth";
 
 export const runtime = "nodejs";
@@ -15,11 +15,14 @@ export async function GET(request: NextRequest) {
     if (!tokens.refresh_token) {
       throw new GoogleDriveConfigurationError("Google did not return a refresh token. Reconnect with consent enabled.");
     }
+    const folders = await bootstrapGoogleDriveFolders(tokens.refresh_token);
     const stored = await getServiceRoleClient().from("google_drive_connections").upsert({
       provider: "google_drive",
       account_email: HIREX_DRIVE_ACCOUNT,
       encrypted_refresh_token: encryptDriveToken(tokens.refresh_token),
-      updated_at: new Date().toISOString(),
+      root_folder_id: folders.rootFolderId,
+      jobs_folder_id: folders.jobsFolderId,
+      candidates_folder_id: folders.candidatesFolderId,
     }, { onConflict: "provider" });
     if (stored.error) throw new Error(stored.error.message);
     return NextResponse.json({

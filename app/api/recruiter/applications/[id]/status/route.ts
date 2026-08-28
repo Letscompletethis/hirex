@@ -37,7 +37,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   const { data: updated, error: updateError } = await actor.admin
     .from("applications")
-    .update({ status: nextStatus, updated_at: new Date().toISOString() })
+    .update({ status: nextStatus })
     .eq("id", id)
     .select("id,candidate_id,job_id,status")
     .single();

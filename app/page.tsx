@@ -1,5 +1,8 @@
 "use client";
 
+/* eslint-disable @next/next/no-html-link-for-pages, react/no-unescaped-entities */
+
+import { useState } from "react";
 import {
   ArrowRight,
   BarChart3,
@@ -13,8 +16,11 @@ import {
 
 import AnimatedBackground from "./AnimatedBackground";
 import ThemeToggle from "./ThemeToggle";
+import { TalkToHirexModal } from "./components/TalkToHirexModal";
 
 export default function Home() {
+  const [contactOpen, setContactOpen] = useState(false);
+
   return (
     <main
       id="top"
@@ -25,6 +31,7 @@ export default function Home() {
       <div className="pointer-events-none fixed inset-0 z-[1] bg-[radial-gradient(circle_at_center,transparent_10%,rgba(0,0,0,0.08)_55%,rgba(0,0,0,0.38)_100%)]" />
 
       <div className="relative z-10">
+        <TalkToHirexModal open={contactOpen} onClose={() => setContactOpen(false)} />
         {/* NAVIGATION */}
         <header className="fixed left-0 right-0 top-0 z-50 px-4 pt-4 sm:px-6">
           <div className="mx-auto flex max-w-7xl items-center justify-between rounded-2xl border border-white/10 bg-[#05060b]/75 px-4 py-3 shadow-2xl backdrop-blur-2xl sm:px-6">
@@ -99,8 +106,9 @@ export default function Home() {
             </p>
 
             <div className="mt-10 flex flex-col justify-center gap-3 sm:flex-row">
-              <a
-                href="/employers"
+              <button
+                type="button"
+                onClick={() => setContactOpen(true)}
                 className="group inline-flex items-center justify-center gap-2 rounded-xl bg-white px-6 py-3.5 font-semibold text-black shadow-2xl transition hover:-translate-y-0.5 hover:bg-white/90"
               >
                 I'm Hiring
@@ -109,7 +117,7 @@ export default function Home() {
                   size={18}
                   className="transition group-hover:translate-x-1"
                 />
-              </a>
+              </button>
 
               <a
                 href="/candidates"
@@ -505,13 +513,14 @@ export default function Home() {
               additional delivery capacity, let's talk.
             </p>
 
-            <a
-              href="mailto:info@hirex.com"
+            <button
+              type="button"
+              onClick={() => setContactOpen(true)}
               className="mt-9 inline-flex items-center gap-2 rounded-xl bg-white px-8 py-4 font-semibold text-black transition hover:-translate-y-0.5"
             >
               Talk to HireX
               <ArrowRight size={18} />
-            </a>
+            </button>
           </div>
         </section>
 

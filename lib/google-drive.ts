@@ -10,6 +10,12 @@ export const HIREX_DRIVE_ACCOUNT = "yasar@hirexstaffing.com";
 
 export class GoogleDriveConfigurationError extends Error {}
 
+export interface GoogleDriveFolderIds {
+  rootFolderId: string;
+  jobsFolderId: string;
+  candidatesFolderId: string;
+}
+
 function getEncryptionKey() {
   const value = process.env.GOOGLE_DRIVE_TOKEN_ENCRYPTION_KEY;
   if (!value || value.length !== 64) {
@@ -34,6 +40,18 @@ export async function getStoredRefreshToken() {
   const decipher = createDecipheriv("aes-256-gcm", getEncryptionKey(), Buffer.from(ivHex, "hex"));
   decipher.setAuthTag(Buffer.from(tagHex, "hex"));
   return Buffer.concat([decipher.update(Buffer.from(encryptedHex, "hex")), decipher.final()]).toString("utf8");
+}
+
+export async function getStoredDriveFolderIds(): Promise<GoogleDriveFolderIds | undefined> {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return undefined;
+  const client = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
+  const { data } = await client
+    .from("google_drive_connections")
+    .select("root_folder_id,jobs_folder_id,candidates_folder_id")
+    .eq("provider", "google_drive")
+    .maybeSingle();
+  if (!data?.root_folder_id || !data.jobs_folder_id || !data.candidates_folder_id) return undefined;
+  return { rootFolderId: data.root_folder_id, jobsFolderId: data.jobs_folder_id, candidatesFolderId: data.candidates_folder_id };
 }
 
 function getOAuthConfig() {
@@ -117,6 +135,10 @@ async function getAccessToken(refreshToken?: string) {
   return body.access_token as string;
 }
 
+export async function getAccessTokenPublic(refreshToken?: string): Promise<string> {
+  return getAccessToken(refreshToken);
+}
+
 async function driveRequest<T>(path: string, init: RequestInit = {}, refreshToken?: string) {
   const accessToken = await getAccessToken(refreshToken);
   const response = await fetch(`${DRIVE_API}${path}`, {
@@ -141,10 +163,32 @@ async function findOrCreateFolder(name: string, parentId: string | undefined, re
   return created.id;
 }
 
+async function createFolder(name: string, parentId: string | undefined, refreshToken?: string) {
+  const created = await driveRequest<{ id: string }>("/files", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder", ...(parentId ? { parents: [parentId] } : {}) }),
+  }, refreshToken);
+  return created.id;
+}
+
+export async function bootstrapGoogleDriveFolders(refreshToken: string): Promise<GoogleDriveFolderIds> {
+  const existing = await getStoredDriveFolderIds();
+  if (existing) return existing;
+  const rootFolderId = await createFolder("HireX ATS", undefined, refreshToken);
+  const jobsFolderId = await createFolder("Jobs", rootFolderId, refreshToken);
+  const candidatesFolderId = await createFolder("Candidates", rootFolderId, refreshToken);
+  return { rootFolderId, jobsFolderId, candidatesFolderId };
+}
+
+export async function findOrCreateFolderPublic(name: string, parentId?: string, refreshToken?: string): Promise<string> {
+  return findOrCreateFolder(name, parentId, refreshToken);
+}
+
 export async function uploadCandidateFile(input: { candidateId: string; file: File; refreshToken?: string }) {
-  const hirexFolderId = await findOrCreateFolder("HireX", undefined, input.refreshToken);
-  const candidatesFolderId = await findOrCreateFolder("Candidates", hirexFolderId, input.refreshToken);
-  const candidateFolderId = await findOrCreateFolder(input.candidateId, candidatesFolderId, input.refreshToken);
+  const folders = await getStoredDriveFolderIds();
+  if (!folders) throw new GoogleDriveConfigurationError("Google Drive folders are not bootstrapped. Reconnect Google Drive first.");
+  const candidateFolderId = await findOrCreateFolder(input.candidateId, folders.candidatesFolderId, input.refreshToken);
   const metadata = { name: input.file.name, parents: [candidateFolderId] };
   const form = new FormData();
   form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
@@ -158,7 +202,7 @@ export async function uploadCandidateFile(input: { candidateId: string; file: Fi
   });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error?.message || "Google Drive file upload failed.");
-  return { hirexFolderId, candidatesFolderId, candidateFolderId, file: body as { id: string; name: string; mimeType: string; parents?: string[]; webViewLink?: string } };
+  return { hirexFolderId: folders.rootFolderId, candidatesFolderId: folders.candidatesFolderId, candidateFolderId, file: body as { id: string; name: string; mimeType: string; parents?: string[]; webViewLink?: string } };
 }
 
 export async function getGoogleDriveStatus(refreshToken?: string) {

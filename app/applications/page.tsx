@@ -198,6 +198,19 @@ export default function ApplicationsPage() {
     }
 
     void loadRecruiters();
+
+    const channel = supabase
+      .channel("recruiter-applications-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "applications" }, () => void loadApplications())
+      .on("postgres_changes", { event: "*", schema: "public", table: "candidates" }, () => void loadApplications())
+      .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, () => void loadApplications())
+      .subscribe();
+    const refreshTimer = window.setInterval(() => void loadApplications(), 15000);
+
+    return () => {
+      window.clearInterval(refreshTimer);
+      void supabase.removeChannel(channel);
+    };
   }, []);
 
   const filteredApplications = useMemo(() => {
